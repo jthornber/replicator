@@ -1,0 +1,5 @@
+struct foo {
+       opaque fixed[123];
+       opaque bounded<123>;
+       opaque unlimited<>;
+};

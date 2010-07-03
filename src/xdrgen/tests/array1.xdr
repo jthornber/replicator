@@ -1,0 +1,12 @@
+struct name {
+       string first<>;
+       string second<>;
+};
+
+struct foo {
+       int fixed[123];
+       int bounded<1024>;
+       int unlimited<>;
+
+       name employees[12];
+};

@@ -1,0 +1,6 @@
+enum foo {
+     ONE = 25,
+     TWO,
+     THREE,
+     FOUR = 89
+};

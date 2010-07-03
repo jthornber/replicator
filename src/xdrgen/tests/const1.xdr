@@ -1,0 +1,5 @@
+const foo = 45;
+const bar = 0;
+const hux = -45;
+const blip = 034;
+const blop = 0xdead;

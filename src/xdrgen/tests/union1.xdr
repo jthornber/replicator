@@ -1,0 +1,18 @@
+enum colour {
+        RED,
+        GREEN,
+        BLUE
+};
+
+union command switch(colour discriminator) {
+case RED:
+        int x;
+
+case GREEN:
+        struct {
+                int y;
+        } g;
+
+default:
+        hyper space;
+};

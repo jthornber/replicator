@@ -1,0 +1,7 @@
+struct foo {
+       hyper x;
+};
+
+struct bar {
+       foo x;
+};
