@@ -47,9 +47,9 @@ XDRGEN_OBJECTS=\
 	$(XDRGEN_DIR)/pp_body.o \
 	$(XDRGEN_DIR)/main.o
 
-bin/xdrgen: $(LIB_OBJECTS) $(XDRGEN_OBJECTS)
+bin/xdrgen: $(XDRGEN_OBJECTS) lib/libreplicator.a
 	@echo "    [LD] "$@
-	$(Q)$(CC) $(CFLAGS) $+ -o $@
+	$(Q)$(CC) $(CFLAGS) $(XDRGEN_OBJECTS) -o $@ -Llib -lreplicator
 
 $(XDRGEN_DIR)/lex.yy.c: $(XDRGEN_DIR)/xdrgen.l
 	@echo '   [LEX] '$@
@@ -60,6 +60,10 @@ $(XDRGEN_DIR)/lex.yy.o: $(XDRGEN_DIR)/xdrgen.tab.h
 $(XDRGEN_DIR)/xdrgen.tab.h $(XDRGEN_DIR)/xdrgen.tab.c: $(XDRGEN_DIR)/xdrgen.y
 	@echo '    [YACC] '$@
 	$(Q)bison --defines $(XDRGEN_DIR)/xdrgen.y -o $@
+
+lib/libreplicator.a: $(LIB_OBJECTS)
+	@echo '    [AR] '$@
+	$(Q)$(AR) -sr $@ $+
 
 Q=
 

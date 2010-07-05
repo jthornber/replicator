@@ -4,3 +4,6 @@
 
 lex.yy.c
 *.tab.[hc]
+
+bin/*
+lib/*
