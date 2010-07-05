@@ -18,7 +18,7 @@ total_passed = 0
 total_failed = 0
 
 # We need to make sure the lvm shared libs are in the LD_LIBRARY_PATH
-ENV['LD_LIBRARY_PATH'] = `pwd`.strip + "/libdm:" + (ENV['LD_LIBRARY_PATH'] || '')
+ENV['LD_LIBRARY_PATH'] = `pwd`.strip + "/lib" + (ENV['LD_LIBRARY_PATH'] || '')
 
 schedules.each do |s|
   s.run

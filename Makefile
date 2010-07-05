@@ -64,6 +64,9 @@ lib/libreplicator.a: $(LIB_OBJECTS)
 	@echo '    [AR] '$@
 	$(Q)$(AR) -sr $@ $+
 
+.PHONEY: test-programs
+test-programs:
+
 Q=
 
 .SUFFIXES:
@@ -72,3 +75,18 @@ Q=
 .c.o:
 	@echo "    [CC] " $@
 	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+RUBY=ruby1.9 -Ireport-generators/lib -Ireport-generators/test
+
+.PHONEY: unit-test ruby-test test-programs
+
+unit-test: test-programs
+	$(RUBY) report-generators/unit_test.rb $(shell find . -name TESTS)
+	$(RUBY) report-generators/title_page.rb
+
+memcheck: test-programs
+	$(RUBY) report-generators/memcheck.rb $(shell find . -name TESTS)
+	$(RUBY) report-generators/title_page.rb
+
+ruby-test:
+	$(RUBY) report-generators/test/ts.rb
