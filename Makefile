@@ -14,35 +14,52 @@ INCLUDES=\
 LEX=flex
 YACC=bison
 
+# datastruct
+DS_DIR=src/datastruct/src
+LIB_OBJECTS+=\
+	$(DS_DIR)/list.o
+
+# mm
+MM_DIR=src/mm/src
+LIB_OBJECTS+=\
+	$(MM_DIR)/pool.o
+
+# log
+LOG_DIR=src/log/src
+LIB_OBJECTS+=\
+	$(LOG_DIR)/log.o
+
+# xdr
+XDR_DIR=src/xdr/src
+LIB_OBJECTS+=\
+
+#	$(XDR_DIR)/xdr.o
 
 # xdrgen
-DIR:=src/xdrgen/src
+XDRGEN_DIR=src/xdrgen/src
 XDRGEN_OBJECTS=\
-	src/datastruct/src/list.o \
-	src/mm/src/pool.o \
-	src/log/src/log.o \
-	$(DIR)/lex.yy.o \
-	$(DIR)/xdrgen.tab.o \
-	$(DIR)/xdrgen.o \
-	$(DIR)/pretty_print.o \
-	$(DIR)/emit.o \
-	$(DIR)/pp_header.o \
-	$(DIR)/pp_body.o \
-	$(DIR)/main.o
+	$(XDRGEN_DIR)/lex.yy.o \
+	$(XDRGEN_DIR)/xdrgen.tab.o \
+	$(XDRGEN_DIR)/xdrgen.o \
+	$(XDRGEN_DIR)/pretty_print.o \
+	$(XDRGEN_DIR)/emit.o \
+	$(XDRGEN_DIR)/pp_header.o \
+	$(XDRGEN_DIR)/pp_body.o \
+	$(XDRGEN_DIR)/main.o
 
-bin/xdrgen: $(XDRGEN_OBJECTS)
+bin/xdrgen: $(LIB_OBJECTS) $(XDRGEN_OBJECTS)
 	@echo "    [LD] "$@
-	$(Q)$(CC) $(CFLAGS) $(XDRGEN_OBJECTS) -o $@
+	$(Q)$(CC) $(CFLAGS) $+ -o $@
 
-$(DIR)/lex.yy.c: $(DIR)/xdrgen.l
+$(XDRGEN_DIR)/lex.yy.c: $(XDRGEN_DIR)/xdrgen.l
 	@echo '   [LEX] '$@
-	$(Q)flex -o $@ $(DIR)/xdrgen.l
+	$(Q)flex -o $@ $(XDRGEN_DIR)/xdrgen.l
 
-$(DIR)/lex.yy.o: $(DIR)/xdrgen.tab.h
+$(XDRGEN_DIR)/lex.yy.o: $(XDRGEN_DIR)/xdrgen.tab.h
 
-$(DIR)/xdrgen.tab.h $(DIR)/xdrgen.tab.c: $(DIR)/xdrgen.y
+$(XDRGEN_DIR)/xdrgen.tab.h $(XDRGEN_DIR)/xdrgen.tab.c: $(XDRGEN_DIR)/xdrgen.y
 	@echo '    [YACC] '$@
-	$(Q)bison --defines $(DIR)/xdrgen.y -o $@
+	$(Q)bison --defines $(XDRGEN_DIR)/xdrgen.y -o $@
 
 Q=
 
