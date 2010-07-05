@@ -2,6 +2,8 @@
 #include "ast.h"
 #include "xdrgen.h"
 
+#include <stdio.h>
+
 static void yyerror(char *s) {
         fprintf(stderr, "<stdin>:%u %s\n", get_line(), s);
         exit(1);
@@ -13,15 +15,16 @@ struct type *simple_type(enum type_type type) {
        return t;
 }
 
-static void list_move(struct dm_list *new_head, struct dm_list *old_head)
+/* FIXME: rename */
+static void list_move_(struct list *new_head, struct list *old_head)
 {
-        dm_list_init(new_head);
-        dm_list_splice(new_head, old_head);
+        list_init(new_head);
+        list_splice(new_head, old_head);
 }
 
-static void add_tail(struct dm_list *head, struct dm_list *item)
+static void add_tail(struct list *head, struct list *item)
 {
-        dm_list_add(head, item);
+        list_add(head, item);
 }
 %}
 
@@ -30,7 +33,7 @@ static void add_tail(struct dm_list *head, struct dm_list *item)
 %union {
        char *str;
        int i;
-       struct dm_list list;
+       struct list list;
 
        struct specification *spec;
        struct definition *def;
@@ -78,17 +81,17 @@ static void add_tail(struct dm_list *head, struct dm_list *item)
 
 specification : definition_list {
                 $$ = zalloc(sizeof(*$$));
-                list_move(&$$->definitions, &$1);
+                list_move_(&$$->definitions, &$1);
                 set_result($$);
               }
               ;
 
 
 definition_list : /* empty */ {
-                  dm_list_init(&$$);
+                  list_init(&$$);
                 }
                 | definition_list definition {
-                  list_move(&$$, &$1);
+                  list_move_(&$$, &$1);
                   add_tail(&$$, &$2->list);
                 }
                 ;
@@ -140,7 +143,7 @@ typedef : TYPEDEF declaration ';' {
 
 const_def : CONST identifier '=' const_expr ';' {
             $$ = zalloc(sizeof(*$$));
-            dm_list_init(&$$->list);
+            list_init(&$$->list);
             $$->identifier = $2;
             $$->ce = $4;
           }
@@ -148,12 +151,12 @@ const_def : CONST identifier '=' const_expr ';' {
 
 declaration : VOID {
               $$ = zalloc(sizeof(*$$));
-              dm_list_init(&$$->list);
+              list_init(&$$->list);
               $$->type = DECL_VOID;
             }
             | STRING identifier '<' '>' {
               $$ = zalloc(sizeof(*$$));
-              dm_list_init(&$$->list);
+              list_init(&$$->list);
               $$->type = DECL_OTHER;
               $$->u.tother.identifier = $2;
               $$->u.tother.di = zalloc(sizeof(struct decl_internal));
@@ -161,7 +164,7 @@ declaration : VOID {
             }
             | STRING identifier '<' const_expr '>' {
               $$ = zalloc(sizeof(*$$));
-              dm_list_init(&$$->list);
+              list_init(&$$->list);
               $$->type = DECL_OTHER;
               $$->u.tother.identifier = $2;
               $$->u.tother.di = zalloc(sizeof(struct decl_internal));
@@ -170,7 +173,7 @@ declaration : VOID {
             }
             | OPAQUE identifier '[' const_expr ']' {
               $$ = zalloc(sizeof(*$$));
-              dm_list_init(&$$->list);
+              list_init(&$$->list);
               $$->type = DECL_OTHER;
               $$->u.tother.identifier = $2;
               $$->u.tother.di = zalloc(sizeof(struct decl_internal));
@@ -179,7 +182,7 @@ declaration : VOID {
             }
             | OPAQUE identifier '<' const_expr '>' {
               $$ = zalloc(sizeof(*$$));
-              dm_list_init(&$$->list);
+              list_init(&$$->list);
               $$->type = DECL_OTHER;
               $$->u.tother.identifier = $2;
               $$->u.tother.di = zalloc(sizeof(struct decl_internal));
@@ -188,7 +191,7 @@ declaration : VOID {
             }
             | OPAQUE identifier '<' '>' {
               $$ = zalloc(sizeof(*$$));
-              dm_list_init(&$$->list);
+              list_init(&$$->list);
               $$->type = DECL_OTHER;
               $$->u.tother.identifier = $2;
               $$->u.tother.di = zalloc(sizeof(struct decl_internal));
@@ -196,7 +199,7 @@ declaration : VOID {
             }
             | type '*' identifier {
               $$ = zalloc(sizeof(*$$));
-              dm_list_init(&$$->list);
+              list_init(&$$->list);
               $$->type = DECL_OTHER;
               $$->u.tother.identifier = $3;
               $$->u.tother.di = zalloc(sizeof(struct decl_internal));
@@ -205,7 +208,7 @@ declaration : VOID {
             }
             | type identifier '[' const_expr ']' {
               $$ = zalloc(sizeof(*$$));
-              dm_list_init(&$$->list);
+              list_init(&$$->list);
               $$->type = DECL_OTHER;
               $$->u.tother.identifier = $2;
               $$->u.tother.di = zalloc(sizeof(struct decl_internal));
@@ -215,7 +218,7 @@ declaration : VOID {
             }
             | type identifier '<' '>' {
               $$ = zalloc(sizeof(*$$));
-              dm_list_init(&$$->list);
+              list_init(&$$->list);
               $$->type = DECL_OTHER;
               $$->u.tother.identifier = $2;
               $$->u.tother.di = zalloc(sizeof(struct decl_internal));
@@ -224,7 +227,7 @@ declaration : VOID {
             }
             | type identifier '<' const_expr '>' {
               $$ = zalloc(sizeof(*$$));
-              dm_list_init(&$$->list);
+              list_init(&$$->list);
               $$->type = DECL_OTHER;
               $$->u.tother.identifier = $2;
               $$->u.tother.di = zalloc(sizeof(struct decl_internal));
@@ -234,7 +237,7 @@ declaration : VOID {
             }
             | type identifier {
               $$ = zalloc(sizeof(*$$));
-              dm_list_init(&$$->list);
+              list_init(&$$->list);
               $$->type = DECL_OTHER;
               $$->u.tother.identifier = $2;
               $$->u.tother.di = zalloc(sizeof(struct decl_internal));
@@ -246,29 +249,29 @@ declaration : VOID {
 union_detail : SWITCH '(' declaration ')' '{' case_list default_ '}' {
                $$ = zalloc(sizeof(*$$));
                $$->discriminator = $3;
-               list_move(&$$->cases, &$6);
+               list_move_(&$$->cases, &$6);
                $$->default_case = $7;
              }
              | SWITCH '(' declaration ')' '{' case_list '}' {
                $$ = zalloc(sizeof(*$$));
                $$->discriminator = $3;
-               list_move(&$$->cases, &$6);
+               list_move_(&$$->cases, &$6);
              }
              ;
 
 case_list : case {
-            dm_list_init(&$$);
+            list_init(&$$);
             add_tail(&$$, &$1->list);
           }
           | case_list case {
-            list_move(&$$, &$1);
+            list_move_(&$$, &$1);
             add_tail(&$$, &$2->list);
           }
           ;
 
 case : CASE const_expr ':' declaration ';' {
        $$ = zalloc(sizeof(*$$));
-       dm_list_init(&$$->list);
+       list_init(&$$->list);
        $$->ce = $2;
        $$->d = $4;
      }
@@ -281,44 +284,44 @@ default_ : DEFAULT ':' declaration ';' {
 
 struct_detail : '{' declaration_list '}' {
                 $$ = zalloc(sizeof(*$$));
-                list_move(&$$->decls, &$2);
+                list_move_(&$$->decls, &$2);
               }
               ;
 
 declaration_list : declaration ';' {
-                   dm_list_init(&$$);
+                   list_init(&$$);
                    add_tail(&$$, &$1->list);
                  }
                  | declaration_list declaration ';' {
-                   list_move(&$$, &$1);
+                   list_move_(&$$, &$1);
                    add_tail(&$$, &$2->list);
                  }
                  ;
 
 enum_detail : '{' enum_fields '}' {
               $$ = zalloc(sizeof(*$$));
-              list_move(&$$->fields, &$2);
+              list_move_(&$$->fields, &$2);
             }
             ;
 
 enum_fields : enum_field {
-              dm_list_init(&$$);
+              list_init(&$$);
               add_tail(&$$, &$1->list);
             }
             | enum_fields ',' enum_field {
-              list_move(&$$, &$1);
+              list_move_(&$$, &$1);
               add_tail(&$$, &$3->list);
             }
             ;
 
 enum_field : identifier {
              $$ = zalloc(sizeof(*$$));
-             dm_list_init(&$$->list);
+             list_init(&$$->list);
              $$->identifier = $1;
            }
            | identifier '=' const_expr {
              $$ = zalloc(sizeof(*$$));
-             dm_list_init(&$$->list);
+             list_init(&$$->list);
              $$->identifier = $1;
              $$->ce = $3;
            }

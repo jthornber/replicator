@@ -16,13 +16,18 @@
 /* FIXME: add valgrind support (there's already a patch for this kicking
  * around) */
 
+#include "list.h"
+#include "lvm-logging.h"
+#include "lvm-types.h"
+
+#include <stdlib.h>
+
 struct chunk {
 	char *begin, *end;
 	struct chunk *prev;
 };
 
 struct pool {
-	struct list list;
 	struct chunk *chunk, *spare_chunk;	/* spare_chunk is a one entry free
 						   list to stop 'bobbling' */
 	size_t chunk_size;
@@ -53,7 +58,6 @@ struct pool *pool_create(const char *name, size_t chunk_hint)
 	while (new_size < p->chunk_size)
 		new_size <<= 1;
 	p->chunk_size = new_size;
-	list_add(&_pools, &p->list);
 	return p;
 }
 
@@ -68,13 +72,7 @@ void pool_destroy(struct pool *p)
 		c = pr;
 	}
 
-	list_del(&p->list);
 	free(p);
-}
-
-void *pool_alloc(struct pool *p, size_t s)
-{
-	return pool_alloc_aligned(p, s, DEFAULT_ALIGNMENT);
 }
 
 void *pool_alloc_aligned(struct pool *p, size_t s, unsigned alignment)
@@ -104,15 +102,9 @@ void *pool_alloc_aligned(struct pool *p, size_t s, unsigned alignment)
 	return r;
 }
 
-void pool_empty(struct pool *p)
+void *pool_alloc(struct pool *p, size_t s)
 {
-	struct chunk *c;
-
-	for (c = p->chunk; c && c->prev; c = c->prev)
-		;
-
-	if (c)
-		pool_free(p, (char *) (c + 1));
+	return pool_alloc_aligned(p, s, DEFAULT_ALIGNMENT);
 }
 
 void pool_free(struct pool *p, void *ptr)
@@ -137,6 +129,17 @@ void pool_free(struct pool *p, void *ptr)
 			  "not in pool");
 	else
 		p->chunk = c;
+}
+
+void pool_empty(struct pool *p)
+{
+	struct chunk *c;
+
+	for (c = p->chunk; c && c->prev; c = c->prev)
+		;
+
+	if (c)
+		pool_free(p, (char *) (c + 1));
 }
 
 int pool_begin_object(struct pool *p, size_t hint)

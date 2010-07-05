@@ -1,8 +1,7 @@
 #ifndef XDRGEN_AST_H
 #define XDRGEN_AST_H
 
-/* for dm_list (why is this in here?) */
-#include "libdevmapper.h"
+#include "list.h"
 
 /*----------------------------------------------------------------*/
 
@@ -75,7 +74,7 @@ enum decl_type {
 };
 
 struct decl {
-        struct dm_list list;
+        struct list list;
         enum decl_type type;
         union {
                 struct {
@@ -121,28 +120,28 @@ struct type {
 };
 
 struct const_def {
-        struct dm_list list;
+        struct list list;
         char *identifier;
         struct const_expr *ce;
 };
 
 struct enum_detail {
-        struct dm_list fields;
+        struct list fields;
 };
 
 struct struct_detail {
-        struct dm_list decls;
+        struct list decls;
 };
 
 struct case_entry {
-        struct dm_list list;
+        struct list list;
         struct const_expr *ce;
         struct decl *d;
 };
 
 struct union_detail {
         struct decl *discriminator;
-        struct dm_list cases;
+        struct list cases;
         struct decl *default_case;
 };
 
@@ -185,7 +184,7 @@ enum definition_type {
 };
 
 struct definition {
-        struct dm_list list;
+        struct list list;
         enum definition_type type;
         union {
                 struct {
@@ -199,7 +198,7 @@ struct definition {
 };
 
 struct specification {
-        struct dm_list definitions;
+        struct list definitions;
 };
 
 /*----------------------------------------------------------------*/

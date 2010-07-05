@@ -1,14 +1,17 @@
 #include "xdrgen.h"
+#include "pool.h"
 
 #include <time.h>
+#include <stdio.h>
+#include <string.h>
 
 /*----------------------------------------------------------------*/
 
-static struct dm_pool *global_pool_;
+static struct pool *global_pool_;
 
 void init()
 {
-        global_pool_ = dm_pool_create("global pool", 100 * 1024);
+        global_pool_ = pool_create("global pool", 100 * 1024);
         if (!global_pool_) {
                 fprintf(stderr, "couldn't allocate global memory pool\n");
                 exit(1);
@@ -19,12 +22,12 @@ void init()
 
 void fin()
 {
-        dm_pool_destroy(global_pool_);
+        pool_destroy(global_pool_);
 }
 
 void *zalloc(size_t s)
 {
-        void *r = dm_pool_alloc(global_pool_, s);
+        void *r = pool_alloc(global_pool_, s);
         if (!r) {
                 fprintf(stderr, "out of memory\n");
                 exit(1);
@@ -35,7 +38,7 @@ void *zalloc(size_t s)
 
 char *dup_string(const char *str)
 {
-        char *r = dm_pool_alloc(global_pool_, strlen(str) + 1);
+        char *r = pool_alloc(global_pool_, strlen(str) + 1);
         if (!r) {
                 fprintf(stderr, "out of memory\n");
                 exit(1);

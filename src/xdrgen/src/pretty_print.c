@@ -163,7 +163,7 @@ static void pp_enum_detail(struct enum_detail *ed)
 {
         struct const_def *cd;
         emit("enum"); push(); nl();
-        dm_list_iterate_items(cd, &ed->fields) {
+        list_iterate_items(cd, &ed->fields) {
                 pp_const_def(cd);
                 nl();
         }
@@ -175,7 +175,7 @@ static void pp_struct_detail(struct struct_detail *sd)
         struct decl *d;
 
         emit("struct"); push(); nl();
-        dm_list_iterate_items(d, &sd->decls) {
+        list_iterate_items(d, &sd->decls) {
                 pp_decl(d);
                 nl();
         }
@@ -203,7 +203,7 @@ static void pp_union_detail(struct union_detail *ud)
         emit("union switch(");
         pp_decl(ud->discriminator);
         emit(") {"); push(); nl();
-        dm_list_iterate_items(ce, &ud->cases) {
+        list_iterate_items(ce, &ud->cases) {
                 emit("case ");
                 pp_expr(ce->ce);
                 emit(": ");
@@ -224,7 +224,7 @@ void pretty_print(struct specification *spec)
 {
         struct definition *def;
 
-        dm_list_iterate_items(def, &spec->definitions) {
+        list_iterate_items(def, &spec->definitions) {
                 switch (def->type) {
                 case DEF_TYPEDEF:
                         pp_typedef(def->u.ttypedef.td);

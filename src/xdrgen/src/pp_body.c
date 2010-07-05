@@ -11,19 +11,19 @@
  *  eg, input->u.foo
  */
 struct var_frame {
-        struct dm_list list;
+        struct list list;
 
         const char *name;
         const char *subscript;
         int is_pointer;
 };
 
-typedef struct dm_list *var_t;
+typedef struct list *var_t;
 
 var_t new_var()
 {
         var_t v = zalloc(sizeof(*v));
-        dm_list_init(v);
+        list_init(v);
         return v;
 }
 
@@ -33,18 +33,18 @@ void push_frame(var_t v, const char *name, int is_pointer)
         f->name = dup_string(name);
         f->subscript = NULL;
         f->is_pointer = is_pointer;
-        dm_list_add(v, &f->list);
+        list_add(v, &f->list);
 }
 
 void subscript_frame(var_t v, const char *subscript)
 {
-        struct var_frame *f = dm_list_item(dm_list_last(v), struct var_frame);
+        struct var_frame *f = list_item(list_last(v), struct var_frame);
         f->subscript = dup_string(subscript);
 }
 
 void pop_frame(var_t v)
 {
-        dm_list_del(dm_list_last(v));
+        list_del(list_last(v));
 }
 
 void emit_var(var_t v)
@@ -53,7 +53,7 @@ void emit_var(var_t v)
         int last_was_pointer = 0;
         struct var_frame *f;
 
-        dm_list_iterate_items(f, v) {
+        list_iterate_items(f, v) {
                 if (!first)
                         emit(last_was_pointer ? "->" : ".");
                 else
@@ -239,7 +239,7 @@ static void pack_struct_detail(struct struct_detail *sd, var_t v)
 {
         struct decl *d;
 
-        dm_list_iterate_items(d, &sd->decls) {
+        list_iterate_items(d, &sd->decls) {
                 pack_decl(d, v); nl();
         }
 }
@@ -267,7 +267,7 @@ static void pack_union_detail(struct union_detail *ud, var_t v)
         emit(") {"); nl();
         push();
         {
-                dm_list_iterate_items(ce, &ud->cases) {
+                list_iterate_items(ce, &ud->cases) {
                         emit("case ");
                         pp_expr(ce->ce);
                         emit(": {"); push(); nl();
@@ -322,7 +322,7 @@ static void decls_(struct specification *spec)
 {
         struct definition *def;
 
-        dm_list_iterate_items(def, &spec->definitions) {
+        list_iterate_items(def, &spec->definitions) {
                 switch (def->type) {
                 case DEF_TYPEDEF:
                         decl_(def->u.ttypedef.td); nl();

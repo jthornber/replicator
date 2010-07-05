@@ -1,6 +1,8 @@
 #include "pretty_print.h"
 #include "emit.h"
 
+#include <stdlib.h>
+
 /*----------------------------------------------------------------*/
 
 static void pp_type(struct type *t);
@@ -153,7 +155,7 @@ static void pp_enum_detail(struct enum_detail *ed)
 {
         struct const_def *cd;
         emit("enum {"); push(); nl();
-        dm_list_iterate_items(cd, &ed->fields) {
+        list_iterate_items(cd, &ed->fields) {
                 pp_const_def(cd); emit(",");
                 nl();
         }
@@ -166,7 +168,7 @@ static void pp_struct_detail(struct struct_detail *sd)
         struct decl *d;
 
         emit("struct {"); push(); nl();
-        dm_list_iterate_items(d, &sd->decls) {
+        list_iterate_items(d, &sd->decls) {
                 pp_decl(d); nl();
         }
         pop();
@@ -197,7 +199,7 @@ static void pp_union_detail(struct union_detail *ud)
                 emit("union {");
                 push(); nl();
                 {
-                        dm_list_iterate_items(ce, &ud->cases) {
+                        list_iterate_items(ce, &ud->cases) {
                                 pp_decl(ce->d); nl();
                         }
 
@@ -221,7 +223,7 @@ static void datatypes_(struct specification *spec)
 {
         struct definition *def;
 
-        dm_list_iterate_items(def, &spec->definitions) {
+        list_iterate_items(def, &spec->definitions) {
                 switch (def->type) {
                 case DEF_TYPEDEF:
                         pp_typedef(def->u.ttypedef.td);
@@ -250,7 +252,7 @@ static void decls_(struct specification *spec)
 {
         struct definition *def;
 
-        dm_list_iterate_items(def, &spec->definitions) {
+        list_iterate_items(def, &spec->definitions) {
                 switch (def->type) {
                 case DEF_TYPEDEF:
                         decl_(def->u.ttypedef.td); nl();

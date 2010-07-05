@@ -4,7 +4,6 @@
 #include <stdlib.h>
 
 #include "ast.h"
-#include "libdevmapper.h"
 
 /*----------------------------------------------------------------*/
 
