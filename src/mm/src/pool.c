@@ -13,6 +13,9 @@
  * Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
+/* FIXME: add valgrind support (there's already a patch for this kicking
+ * around) */
+
 struct chunk {
 	char *begin, *end;
 	struct chunk *prev;
