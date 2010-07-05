@@ -1,14 +1,14 @@
 #include "xdr.h"
-#include "data-structures/list.h"
+#include "list.h"
 
 #include <stdlib.h>
-#include <arpa/inet.h>
+#include <string.h>
 
 /*----------------------------------------------------------------*/
 
 /* We implement a very simple pool allocator here. */
 struct chunk {
-        struct dm_list *list;
+        struct list list;
         void *start;
         void *end;
         void *alloc_end;
@@ -16,26 +16,26 @@ struct chunk {
 
 struct xdr_buffer {
         size_t chunk_size;
-        struct dm_list chunks;
+        struct list chunks;
+        size_t allocated;
 };
 
-struct xdr_buffer *xdr_buffer_create(size_t size_hint);
+struct xdr_buffer *xdr_buffer_create(size_t size_hint)
 {
         struct xdr_buffer *b = malloc(sizeof(*b));
         if (!b)
                 return NULL;
 
-        b->chunk_size = chunk_size;
-        dm_list_init(&b->chunks);
-        b->nr_chunks = 0;
+        b->chunk_size = size_hint;
+        list_init(&b->chunks);
 
         return b;
 }
 
 void xdr_buffer_destroy(struct xdr_buffer *buf)
 {
-        struct chunk *c;
-        dm_list_iterate_items_safe(c, n, buf->chunks)
+        struct chunk *c, *tmp;
+        list_iterate_items_safe (c, tmp, &buf->chunks)
                 free(c);
 
         free(buf);
@@ -48,10 +48,9 @@ int xdr_buffer_add_block(struct xdr_buffer *buf, void *data, size_t len)
                 return 0;
 
         c->start = data;
-        c->end = data + len[i];
+        c->end = data + len;
         c->alloc_end = c->end;
-        dm_list_add(&buf->chunks, &c->list);
-        b->nr_chunks++;
+        list_add(&buf->chunks, &c->list);
 
         return 1;
 }
@@ -83,22 +82,23 @@ static int write_new_chunk_(struct xdr_buffer *buf, void *data, size_t len)
         c->alloc_end = c->start + len;
 
         memcpy(c->start, data, len);
-        dm_list_add(buf->chunks, &c->list);
-        b->nr_chunks++;
+        list_add(&buf->chunks, &c->list);
+
         return 1;
 }
 
 /*
  * Fast path.
  */
-static inline write_(struct xdr_buffer *buf, void *data, size_t len)
+static inline int write_(struct xdr_buffer *buf, void *data, size_t len)
 {
-        struct dm_list *last = dm_list_last(&buf->chunks);
+        struct chunk *c;
+        struct list *last = list_last(&buf->chunks);
 
         if (!last)
                 return write_new_chunk_(buf, data, len);
 
-        c = dm_list_item(last, struct chunk);
+        c = list_item(last, struct chunk);
         if (chunk_space_(c) > len)
                 return write_new_chunk_(buf, data, len);
 
@@ -108,7 +108,7 @@ static inline write_(struct xdr_buffer *buf, void *data, size_t len)
         return 1;
 }
 
-int xdr_buffer_write(struct xdr_buffer *buf, void *data, size_t len);
+int xdr_buffer_write(struct xdr_buffer *buf, void *data, size_t len)
 {
         if (len % 4)
                 return 0;
@@ -127,21 +127,21 @@ struct xdr_cursor {
         struct xdr_buffer *buf;
         struct chunk *c;
         void *where;
-}
+};
 
 struct xdr_cursor *xdr_cursor_create(struct xdr_buffer *buf)
 {
-        struct dm_list *first;
+        struct list *first;
         struct xdr_cursor *c = malloc(sizeof(*c));
         if (!c)
                 return NULL;
 
         c->buf = buf;
-        first = dm_list_first(&buf->chunks);
+        first = list_first(&buf->chunks);
         if (!first)
                 c->c = NULL;
         else {
-                c->c = dm_list_item(first, struct chunk);
+                c->c = list_item(first, struct chunk);
                 c->where = c->c->start;
         }
 
@@ -154,27 +154,27 @@ void xdr_cursor_destroy(struct xdr_cursor *c)
 }
 
 static inline
-int cursor_read_(struct xdr_cursor *c, void *data, size_t len)
+int cursor_read_(struct xdr_cursor *c, void *data, size_t offset)
 {
         struct xdr_cursor copy = *c;
 
-        while (offset && copy->c) {
-                size_t cs = copy->c->end - copy->where;
+        while (offset && copy.c) {
+                size_t cs = copy.c->end - copy.where;
 
                 if (cs >= offset) {
                         if (data)
-                                memcpy(data, copy->where, offset);
-                        copy->where += offset;
+                                memcpy(data, copy.where, offset);
+                        copy.where += offset;
                         offset = 0;
                 } else {
-                        struct dm_list *n = dm_list_next(&buf->chunks, &copy->c->list);
+                        struct list *n = list_next(&c->buf->chunks, &copy.c->list);
                         if (!n)
                                 return 0;
 
-                        copy->c = dm_list_item(n, struct chunk);
-                        copy->where = copy->c->start;
+                        copy.c = list_item(n, struct chunk);
+                        copy.where = copy.c->start;
                         if (data) {
-                                memcpy(data, copy->where, offset);
+                                memcpy(data, copy.where, offset);
                                 data += cs;
                         }
                         offset -= cs;

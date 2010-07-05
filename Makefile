@@ -32,8 +32,7 @@ LIB_OBJECTS+=\
 # xdr
 XDR_DIR=src/xdr/src
 LIB_OBJECTS+=\
-
-#	$(XDR_DIR)/xdr.o
+	$(XDR_DIR)/xdr.o
 
 # xdrgen
 XDRGEN_DIR=src/xdrgen/src
