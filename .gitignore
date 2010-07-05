@@ -10,3 +10,4 @@ lib/*
 include/*
 
 src/replicator/src/protocol.[hc]
+reports/
