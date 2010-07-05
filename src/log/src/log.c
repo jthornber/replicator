@@ -15,7 +15,7 @@
 
 #include "log.h"
 #include "lvm-logging.h"
-#include "lvm-types.h"
+#include "datastruct/lvm-types.h"
 
 #include <stdarg.h>
 #include <syslog.h>

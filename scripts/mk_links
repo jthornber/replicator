@@ -1,0 +1,14 @@
+#!/bin/sh
+
+mkdir -p include
+cd include
+
+for unit in "$@"; do
+    mkdir -p $unit
+    cd $unit
+    for i in ../../src/$unit/src/*.h; do
+        rm -f $(basename $i)
+        ln -s $i
+    done
+    cd ..
+done

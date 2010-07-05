@@ -1,5 +1,5 @@
 #include "xdrgen.h"
-#include "pool.h"
+#include "mm/pool.h"
 
 #include <time.h>
 #include <stdio.h>

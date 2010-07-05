@@ -1,5 +1,5 @@
 #include "xdr.h"
-#include "list.h"
+#include "datastruct/list.h"
 
 #include <stdlib.h>
 #include <string.h>

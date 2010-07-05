@@ -1,7 +1,7 @@
 #ifndef XDRGEN_AST_H
 #define XDRGEN_AST_H
 
-#include "list.h"
+#include "datastruct/list.h"
 
 /*----------------------------------------------------------------*/
 

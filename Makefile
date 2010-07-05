@@ -6,13 +6,13 @@
 CC=gcc
 CFLAGS=-Wall -g
 INCLUDES=\
-	-Isrc/datastruct/src \
-	-Isrc/mm/src \
-	-Isrc/xdr/src \
-	-Isrc/log/src
+	-Iinclude
 
 LEX=flex
 YACC=bison
+
+# immediate evaluation used to force this to be performed early on
+LINK_INCLUDES:=$(shell scripts/mk_links log datastruct mm xdr)
 
 # datastruct
 DS_DIR=src/datastruct/src

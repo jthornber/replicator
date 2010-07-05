@@ -16,9 +16,9 @@
 /* FIXME: add valgrind support (there's already a patch for this kicking
  * around) */
 
-#include "list.h"
-#include "lvm-logging.h"
-#include "lvm-types.h"
+#include "datastruct/list.h"
+#include "datastruct/lvm-types.h"
+#include "log/lvm-logging.h"
 
 #include <stdlib.h>
 
