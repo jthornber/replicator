@@ -8,3 +8,5 @@ lex.yy.c
 bin/*
 lib/*
 include/*
+
+src/replicator/src/protocol.[hc]

@@ -7,10 +7,6 @@ struct device_binding {
         string path<>;
 };
 
-struct open_detail {
-        device_binding devices<>;
-};
-
 struct io_detail {
         unsigned dev;           /* this should be the shortname from the binding */
         opaque data<>;
@@ -26,7 +22,7 @@ enum command_type {
 
 union command switch (command_type discriminator) {
 case JOURNAL_OPEN:
-        struct open_detail open_detail_;
+        device_binding devices<>;
 
 /*
  * This command will not complete until all merging has been done.  By

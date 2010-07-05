@@ -34,6 +34,17 @@ XDR_DIR=src/xdr/src
 LIB_OBJECTS+=\
 	$(XDR_DIR)/xdr.o
 
+# replicator
+REP_DIR=src/replicator/src
+REP_OBJECTS=\
+	$(REP_DIR)/main.o
+
+$(REP_DIR)/main.o: $(REP_DIR)/protocol.h
+
+bin/replicator: $(REP_OBJECTS)
+	@echo '    [LN] '$@
+	$(Q)$(CC) $+ -o $@ -Llib -lreplicator
+
 # xdrgen
 XDRGEN_DIR=src/xdrgen/src
 XDRGEN_OBJECTS=\
@@ -70,11 +81,15 @@ test-programs:
 Q=
 
 .SUFFIXES:
-.SUFFIXES: .c .o .l .y
+.SUFFIXES: .c .o .l .y .xdr .h
 
 .c.o:
-	@echo "    [CC] " $@
+	@echo '    [CC] '$@
 	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+.xdr.h:
+	@echo '    [XDRGEN] '$@
+	$(Q)$(XDRGEN) --format header < $< > $@
 
 RUBY=ruby1.9 -Ireport-generators/lib -Ireport-generators/test
 
