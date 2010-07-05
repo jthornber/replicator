@@ -13,20 +13,23 @@
  * Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
-#include "lib.h"
-#include "device.h"
-#include "memlock.h"
-#include "lvm-string.h"
-#include "lvm-file.h"
-#include "defaults.h"
-#include "config.h"
+#include "log.h"
+#include "lvm-logging.h"
+#include "lvm-types.h"
 
 #include <stdarg.h>
 #include <syslog.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 static FILE *_log_file;
+#if 0
 static struct device _log_dev;
 static struct str_list _log_dev_alias;
+#endif
 
 static int _syslog = 0;
 static int _log_to_file = 0;
@@ -64,17 +67,6 @@ void init_log_file(const char *log_file, int append)
 	_log_to_file = 1;
 }
 
-void init_log_direct(const char *log_file, int append)
-{
-	int open_flags = append ? 0 : O_TRUNC;
-
-	dev_create_file(log_file, &_log_dev, &_log_dev_alias, 1);
-	if (!dev_open_flags(&_log_dev, O_RDWR | O_CREAT | open_flags, 1, 0))
-		return;
-
-	_log_direct = 1;
-}
-
 void init_log_while_suspended(int log_while_suspended)
 {
 	_log_while_suspended = log_while_suspended;
@@ -100,18 +92,19 @@ void release_log_memory(void)
 	if (!_log_direct)
 		return;
 
-	dm_free((char *) _log_dev_alias.str);
-	_log_dev_alias.str = "activate_log file";
+	// free((char *) _log_dev_alias.str);
+	// _log_dev_alias.str = "activate_log file";
 }
 
 void fin_log(void)
 {
 	if (_log_direct) {
-		dev_close(&_log_dev);
+		// dev_close(&_log_dev);
 		_log_direct = 0;
 	}
 
 	if (_log_to_file) {
+#if 0
 		if (dm_fclose(_log_file)) {
 			if (errno)
 			      fprintf(stderr, "failed to write log file: %s\n",
@@ -120,6 +113,7 @@ void fin_log(void)
 			      fprintf(stderr, "failed to write log file\n");
 
 		}
+#endif
 		_log_to_file = 0;
 	}
 }
@@ -152,7 +146,7 @@ void reset_lvm_errno(int store_errmsg)
 	_lvm_errno = 0;
 
 	if (_lvm_errmsg) {
-		dm_free(_lvm_errmsg);
+		free(_lvm_errmsg);
 		_lvm_errmsg = NULL;
 	}
 
@@ -169,6 +163,7 @@ const char *stored_errmsg(void)
 	return _lvm_errmsg ? : "";
 }
 
+#if 0
 static struct dm_hash_table *_duplicated = NULL;
 
 void reset_log_duplicated(void) {
@@ -176,10 +171,12 @@ void reset_log_duplicated(void) {
 		dm_hash_destroy(_duplicated);
 	_duplicated = NULL;
 }
+#endif
 
 void print_log(int level, const char *file, int line, int dm_errno,
 	       const char *format, ...)
 {
+#if 0
 	va_list ap;
 	char buf[1024], buf2[4096], locn[4096];
 	int bufused, n;
@@ -380,4 +377,5 @@ void print_log(int level, const char *file, int line, int dm_errno,
 		dev_append(&_log_dev, sizeof(buf), buf);
 		_already_logging = 0;
 	}
+#endif
 }
