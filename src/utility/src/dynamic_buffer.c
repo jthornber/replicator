@@ -23,7 +23,7 @@ struct dynamic_buffer *dynamic_buffer_create(size_t hint)
         return db;
 }
 
-void dynamic_buffer *dynamic_buffer_destroy(struct dynamic_buffer *db)
+void dynamic_buffer_destroy(struct dynamic_buffer *db)
 {
         free(db->data);
         free(db);
@@ -45,5 +45,3 @@ void *dynamic_buffer_get(struct dynamic_buffer *db, size_t required_space)
 }
 
 /*----------------------------------------------------------------*/
-
-#endif

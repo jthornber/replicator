@@ -18,7 +18,9 @@ UNITS=\
 	datastruct \
 	mm \
 	xdr \
-	csp
+	csp \
+	utility
+
 LINK_INCLUDES:=$(shell scripts/mk_links $(UNITS))
 
 # datastruct
@@ -51,6 +53,13 @@ $(REP_DIR)/main.o: $(REP_DIR)/protocol.h
 bin/replicator: $(REP_OBJECTS)
 	@echo '    [LN] '$@
 	$(Q)$(CC) $+ -o $@ -Llib -lreplicator
+
+# utility
+UTIL_DIR=src/utility/src
+UTIL_OBJECTS=\
+	$(UTIL_DIR)/dynamic_buffer.o
+LIB_OBJECTS+=\
+	$(UTIL_OBJECTS)
 
 # xdrgen
 XDRGEN_DIR=src/xdrgen/src
