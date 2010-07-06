@@ -35,14 +35,21 @@ static void pp_const_def(struct const_def *cd)
         }
 }
 
-static void pp_decl_internal(struct decl_internal *di)
+static void pp_decl_internal(struct decl_internal *di, const char *identifier)
 {
         switch (di->type) {
         case DECL_SIMPLE:
                 pp_type(di->u.simple.t);
+                emit(" %s", identifier);
                 break;
 
         case DECL_ARRAY:
+                pp_type(di->u.array.t);
+                emit(" %s[", identifier);
+                pp_expr(di->u.array.e);
+                emit("]");
+                break;
+
         case DECL_VAR_ARRAY:
                 emit("struct {");
                 push(); nl();
@@ -50,7 +57,7 @@ static void pp_decl_internal(struct decl_internal *di)
                 emit(" *array;"); nl();
                 emit("size_t len;"); nl();
                 pop();
-                emit("}");
+                emit("} %s", identifier);
                 break;
 
         case DECL_OPAQUE:
@@ -60,37 +67,40 @@ static void pp_decl_internal(struct decl_internal *di)
                 emit("void *data;"); nl();
                 emit("size_t len;"); nl();
                 pop();
-                emit("}");
+                emit("} %s", identifier);
                 break;
 
         case DECL_STRING:
-                emit("const char *");
+                emit("const char *%s", identifier);
                 break;
 
         case DECL_POINTER:
                 pp_type(di->u.pointer.t);
-                emit(" *");
+                emit(" *%s", identifier);
                 break;
         }
 }
 
-static void pp_typedef_internal(struct typedef_internal *ti)
+static void pp_typedef_internal(struct typedef_internal *ti, const char *identifier)
 {
         switch (ti->type) {
         case DEF_SIMPLE:
-                pp_decl_internal(ti->u.tsimple.di);
+                pp_decl_internal(ti->u.tsimple.di, identifier);
                 break;
 
         case DEF_ENUM:
                 pp_enum_detail(ti->u.tenum.ed);
+                emit(" %s", identifier);
                 break;
 
         case DEF_STRUCT:
                 pp_struct_detail(ti->u.tstruct.sd);
+                emit(" %s", identifier);
                 break;
 
         case DEF_UNION:
                 pp_union_detail(ti->u.tunion.ud);
+                emit(" %s", identifier);
                 break;
         }
 }
@@ -98,8 +108,8 @@ static void pp_typedef_internal(struct typedef_internal *ti)
 static void pp_typedef(struct typedef_ *td)
 {
         emit("typedef ");
-        pp_typedef_internal(td->ti);
-        emit(" %s;", td->identifier); nl();
+        pp_typedef_internal(td->ti, td->identifier);
+        emit(";"); nl();
 }
 
 static void pp_type(struct type *t)
@@ -182,8 +192,8 @@ static void pp_decl(struct decl *d)
                 break;
 
         case DECL_OTHER:
-                pp_decl_internal(d->u.tother.di);
-                emit(" %s;", d->u.tother.identifier);
+                pp_decl_internal(d->u.tother.di, d->u.tother.identifier);
+                emit(";");
                 break;
         }
 }
@@ -270,7 +280,7 @@ void print_header(struct specification *spec)
 
         emit("#ifndef XDR_OUTPUT_%ld_H\n#define XDR_OUTPUT_%ld_H", n, n); nl(); nl();
         emit("#include \"xdr/xdr.h\""); nl();
-        emit("#include \"mm/pool.h\""); nl();
+        emit("#include \"mm/pool.h\""); nl(); nl();
         sep();
         datatypes_(spec);
         sep();
