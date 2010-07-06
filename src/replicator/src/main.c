@@ -1,16 +1,17 @@
 #include "protocol.h"
 #include "csp/control.h"
 #include "csp/io.h"
+#include "utility/dynamic_buffer.h"
 
 #include <stdio.h>
 
 /*
  * Server
  */
-int read_request(int fd, struct pool *mem, command **result, uint32_t *req_id)
+int read_request(int fd, struct dynamic_buffer *db, struct pool *mem, command **result, uint32_t *req_id)
 {
+        void *data;
         request_header header_raw, *header;
-        char data[32 * 1024];   /* FIXME: use a dynamic buffer */
 
         /* read the header */
         if (read_exact(fd, &header_raw, sizeof(header)) < 0)
@@ -20,6 +21,7 @@ int read_request(int fd, struct pool *mem, command **result, uint32_t *req_id)
                 return 0;
 
         /* read the payload */
+        data = dynamic_buffer_get(db, header->msg_size);
         if (read_exact(fd, data, header->msg_size) < 0)
                 return 0;
 
