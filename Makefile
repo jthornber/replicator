@@ -13,7 +13,13 @@ YACC=bison
 XDRGEN=bin/xdrgen
 
 # immediate evaluation used to force this to be performed early on
-LINK_INCLUDES:=$(shell scripts/mk_links log datastruct mm xdr)
+UNITS=\
+	log \
+	datastruct \
+	mm \
+	xdr \
+	csp
+LINK_INCLUDES:=$(shell scripts/mk_links $(UNITS))
 
 # datastruct
 DS_DIR=src/datastruct/src
