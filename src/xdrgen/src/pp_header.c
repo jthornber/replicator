@@ -243,7 +243,7 @@ static void decl_(struct typedef_ *td)
         emit("int xdr_pack_%s(struct xdr_buffer *buf, %s *input);",
              td->identifier, td->identifier);
         nl();
-        emit("int xdr_unpack_%s(struct xdr_cursor *c, struct dm_pool *mem, %s **output);",
+        emit("int xdr_unpack_%s(struct xdr_cursor *c, struct pool *mem, %s **output);",
              td->identifier, td->identifier);
         nl();
 }
@@ -268,7 +268,9 @@ void print_header(struct specification *spec)
 {
         long n = random();
 
-        emit("#ifndef XDR_OUTPUT_%ld_H\n#define XDR_OUTPUT_%ld_H\n\n", n, n);
+        emit("#ifndef XDR_OUTPUT_%ld_H\n#define XDR_OUTPUT_%ld_H", n, n); nl(); nl();
+        emit("#include \"xdr/xdr.h\""); nl();
+        emit("#include \"mm/pool.h\""); nl();
         sep();
         datatypes_(spec);
         sep();
