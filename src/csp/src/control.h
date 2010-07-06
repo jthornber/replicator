@@ -6,7 +6,7 @@
 void csp_init();
 void csp_exit();
 
-int csp_start_scheduling();
+int csp_start();
 
 /*----------------------------------------------------------------*/
 

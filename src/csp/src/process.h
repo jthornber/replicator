@@ -9,10 +9,10 @@
 
 typedef uint32_t process_t;
 typedef void (*process_fn)(void *);
-process_t spawn(process_fn fn, void *context);
-process_t self();
-void kill_process(process_t pid);
-void yield(int force);
+process_t csp_spawn(process_fn fn, void *context);
+process_t csp_self();
+void csp_kill(process_t pid);
+void csp_yield(int force);
 void csp_sleep(unsigned milli);
 
 /*----------------------------------------------------------------*/

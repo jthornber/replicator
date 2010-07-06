@@ -31,7 +31,7 @@ int read_request(int fd, struct dynamic_buffer *db, struct pool *mem, command **
         request_header header_raw, *header;
 
         /* read the header */
-        if (read_exact(fd, &header_raw, sizeof(header)) < 0)
+        if (csp_read_exact(fd, &header_raw, sizeof(header)) < 0)
                 return 0;
 
         if (!xdr_unpack_using(request_header, &header_raw, sizeof(header_raw), mem, &header))
@@ -39,7 +39,7 @@ int read_request(int fd, struct dynamic_buffer *db, struct pool *mem, command **
 
         /* read the payload */
         data = dynamic_buffer_get(db, header->msg_size);
-        if (read_exact(fd, data, header->msg_size) < 0)
+        if (csp_read_exact(fd, data, header->msg_size) < 0)
                 return 0;
 
         if (!xdr_unpack_using(command, data, header->msg_size, mem, result))
@@ -133,7 +133,7 @@ void listen_loop(struct server *s)
                 }
 
                 list_add(&s->clients, &c->list);
-                spawn((process_fn) client_loop, c);
+                csp_spawn((process_fn) client_loop, c);
         }
 }
 
@@ -152,8 +152,8 @@ int main(int argc, char **argv)
                 return 1;
         }
 
-        spawn((process_fn) listen_loop, s);
-        csp_start_scheduling();
+        csp_spawn((process_fn) listen_loop, s);
+        csp_start();
 
         csp_exit();
         return 0;

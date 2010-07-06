@@ -16,7 +16,7 @@
  * You must set non blocking on all file descriptors passed to these
  * functions.
  */
-void set_non_blocking(int fd);
+void csp_set_non_blocking(int fd);
 
 ssize_t csp_read(int fd, void *buf, size_t count);
 ssize_t csp_write(int fd, const void *buf, size_t count);
@@ -26,8 +26,8 @@ ssize_t csp_write(int fd, const void *buf, size_t count);
  */
 int csp_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 
-ssize_t read_exact(int fd, void *buf, size_t count);
-ssize_t write_exact(int fd, const void *buf, size_t count);
+ssize_t csp_read_exact(int fd, void *buf, size_t count);
+ssize_t csp_write_exact(int fd, const void *buf, size_t count);
 
 /*----------------------------------------------------------------*/
 
