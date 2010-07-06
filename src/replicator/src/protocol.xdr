@@ -2,13 +2,13 @@
  * Protocol accepted by the replicator tcp server.
  */
 struct device_binding {
-        unsigned shortname;
+        unsigned int shortname;
         string logical_name<>;
         string path<>;
 };
 
 struct io_detail {
-        unsigned dev;           /* this should be the shortname from the binding */
+        unsigned int dev;           /* this should be the shortname from the binding */
         opaque data<>;
 };
 
@@ -49,8 +49,8 @@ case JOURNAL_ROLLBACK:
  * |request_id| to tie together request and response.
  */
 struct request_header {
-        unsigned msg_size;
-        unsigned request_id;
+        unsigned int msg_size;
+        unsigned int request_id;
 };
 
 enum response_code {
@@ -59,13 +59,13 @@ enum response_code {
 };
 
 struct response {
-        unsigned request_id;
+        unsigned int request_id;
 
         union switch (response_code discriminator) {
         case ACK:
                 void;
 
-        case NACK
+        case NACK:
                 string reason<>;
         } outcome;
 };
