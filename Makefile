@@ -10,6 +10,7 @@ INCLUDES=\
 
 LEX=flex
 YACC=bison
+XDRGEN=bin/xdrgen
 
 # immediate evaluation used to force this to be performed early on
 LINK_INCLUDES:=$(shell scripts/mk_links log datastruct mm xdr)
