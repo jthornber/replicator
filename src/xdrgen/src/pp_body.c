@@ -329,9 +329,11 @@ static void pack_union_detail(struct union_detail *ud, var_t v)
         struct case_entry *ce;
 
         emit("switch (input->");
-        /* FIXME: emit decl name */
-        emit(") {"); nl();
-        push();
+        push_frame(v, ud->discriminator->u.tother.identifier, 0);
+        emit_var(v);
+        pop_frame(v);
+        emit(") {"); push(); nl();
+
         {
                 list_iterate_items(ce, &ud->cases) {
                         emit("case ");
@@ -347,7 +349,7 @@ static void pack_union_detail(struct union_detail *ud, var_t v)
                 if (ud->default_case) {
                         emit("default: {"); nl();
                         push();
-                        pack_decl(ud->default_case, v);
+                        pack_decl(ud->default_case, v); nl();
                         emit("break;"); nl();
                         pop();
                         emit("}"); nl();
