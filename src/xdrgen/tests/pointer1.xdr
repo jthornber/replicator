@@ -1,0 +1,4 @@
+struct string_list {
+       string item<>;
+       string_list *next;
+}; 

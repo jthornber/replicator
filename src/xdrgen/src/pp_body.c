@@ -203,8 +203,22 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 break;
 
         case DECL_POINTER:
+                emit("if (!");
+                emit_var(v);
+                emit(")"); push(); nl();
+                emit("if (!xdr_pack_uint(buf, 0))"); push(); nl();
+                emit("return 0;");
+                pop(); nl();
+                pop(); nl();
+                emit("else {"); push(); nl();
+                emit("if (!xdr_pack_uint(buf, 1))"); push(); nl();
+                emit("return 0;");
+                pop(); nl();
+
                 pack_type(di->u.pointer.t, v);
-                emit(" *");
+
+                pop(); nl();
+                emit("}");
                 break;
         }
 }
