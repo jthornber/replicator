@@ -29,6 +29,8 @@ int csp_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 ssize_t csp_read_exact(int fd, void *buf, size_t count);
 ssize_t csp_write_exact(int fd, const void *buf, size_t count);
 
+void csp_dataflush(int fd);
+
 /*----------------------------------------------------------------*/
 
 #endif
