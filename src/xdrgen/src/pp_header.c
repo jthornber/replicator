@@ -61,10 +61,15 @@ static void pp_decl_internal(struct decl_internal *di, const char *identifier)
                 break;
 
         case DECL_OPAQUE:
+                emit("uint8_t %s[", identifier);
+                pp_expr(di->u.opaque.e);
+                emit("]");
+                break;
+
         case DECL_VAR_OPAQUE:
                 emit("struct {");
                 push(); nl();
-                emit("void *data;"); nl();
+                emit("uint8_t *data;"); nl();
                 emit("size_t len;"); nl();
                 pop();
                 emit("} %s", identifier);
