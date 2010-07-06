@@ -195,4 +195,39 @@ int xdr_cursor_read(struct xdr_cursor *c, void *data, size_t len)
         return cursor_read_(c, data, len);
 }
 
+/*--------------------------------*/
+
+int xdr_unpack_using_(xdr_unpack_fn fn, void *data, size_t len, struct pool *mem, void **result)
+{
+        struct xdr_buffer *b;
+        struct xdr_cursor *c;
+
+        /* decode */
+        b = xdr_buffer_create(1024);
+        if (!b)
+                return 0;
+
+        if (!xdr_buffer_add_block(b, data, len)) {
+                xdr_buffer_destroy(b);
+                return 0;
+        }
+
+        c = xdr_cursor_create(b);
+        if (!c) {
+                xdr_buffer_destroy(b);
+                return 0;
+        }
+
+        if (!fn(c, mem, result)) {
+                xdr_cursor_destroy(c);
+                xdr_buffer_destroy(b);
+                return 0;
+        }
+
+        xdr_cursor_destroy(c);
+        xdr_buffer_destroy(b);
+
+        return 1;
+}
+
 /*----------------------------------------------------------------*/

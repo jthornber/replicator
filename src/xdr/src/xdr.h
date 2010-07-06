@@ -1,6 +1,8 @@
 #ifndef LVM_XDR_H
 #define LVM_XDR_H
 
+#include "mm/pool.h"
+
 #include <arpa/inet.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -43,6 +45,19 @@ void xdr_cursor_destroy(struct xdr_cursor *c);
 int xdr_cursor_forward(struct xdr_cursor *c, size_t offset);
 int xdr_cursor_read(struct xdr_cursor *c, void *data, size_t len);
 
+/*
+ * A little utility to do the grunt work of unpacking.
+ *
+ * fn        - the xdr_unpack_<type>() function output by xdrgen
+ * data, len - the raw data to be unpacked
+ * mem       - the allocator to use for the result
+ * result    - the result iff successful
+ */
+typedef int (*xdr_unpack_fn)(struct xdr_cursor *c, struct pool *, void **);
+int xdr_unpack_using_(xdr_unpack_fn fn, void *data, size_t len,
+                      struct pool *mem, void **result);
+#define xdr_unpack_using(fn, data, len, mem, result)                     \
+        xdr_unpack_using_((xdr_unpack_fn) xdr_unpack_ ##fn, data, len, mem, (void **) result)
 /*--------------------------------*/
 
 /*
