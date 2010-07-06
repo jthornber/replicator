@@ -110,10 +110,14 @@ static inline int write_(struct xdr_buffer *buf, void *data, size_t len)
 
 int xdr_buffer_write(struct xdr_buffer *buf, void *data, size_t len)
 {
-        if (len % 4)
+        unsigned remains = len % 4;
+        if (remains) {
+                static uint32_t zeroes = 0;
+                write_(buf, &zeroes, 4 - remains);
                 return 0;
 
-        return write_(buf, data, len);
+        } else
+                return write_(buf, data, len);
 }
 
 size_t xdr_buffer_size(struct xdr_buffer *buf)

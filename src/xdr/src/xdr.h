@@ -29,10 +29,9 @@ void xdr_buffer_destroy(struct xdr_buffer *buf);
 int xdr_buffer_add_block(struct xdr_buffer *buf, void *data, size_t len);
 
 /*
- * Writing data to a buffer.  Make sure your data length is a multiple of
- * 4, this call will fail otherwise.  This has atomic semantics, it either
- * succeeds and all the data is written, or it fails and _no_ data is
- * written.
+ * Writing data to a buffer.  Pads to a multiple of 4 bytes.  This has
+ * atomic semantics, it either succeeds and all the data is written, or it
+ * fails and _no_ data is written.
  */
 int xdr_buffer_write(struct xdr_buffer *buf, void *data, size_t len);
 
@@ -58,6 +57,7 @@ int xdr_unpack_using_(xdr_unpack_fn fn, void *data, size_t len,
                       struct pool *mem, void **result);
 #define xdr_unpack_using(fn, data, len, mem, result)                     \
         xdr_unpack_using_((xdr_unpack_fn) xdr_unpack_ ##fn, data, len, mem, (void **) result)
+
 /*--------------------------------*/
 
 /*
