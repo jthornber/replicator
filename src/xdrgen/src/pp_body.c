@@ -297,7 +297,8 @@ static void pack_type(struct type *t, var_t v)
 
 static void pack_enum_detail(struct enum_detail *ed, var_t v)
 {
-        pack("uint", v);
+        emit("if (!xdr_pack_uint(buf, (uint) "); emit_var(v); emit("))"); push(); nl();
+        emit("return 0;"); pop(); nl();
 }
 
 static void pack_struct_detail(struct struct_detail *sd, var_t v)
