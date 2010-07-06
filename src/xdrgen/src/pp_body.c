@@ -99,15 +99,6 @@ static void pp_expr(struct const_expr *ce)
         }
 }
 
-static void pack_const_def(struct const_def *cd)
-{
-        emit("%s", cd->identifier);
-        if (cd->ce) {
-                emit(" = ");
-                pp_expr(cd->ce);
-        }
-}
-
 static void pack_decl_internal(struct decl_internal *di, var_t v)
 {
         switch (di->type) {
@@ -117,7 +108,7 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
 
         case DECL_ARRAY:
                 emit("{"); push(); nl();
-                emit("unsigned int i"); nl();
+                emit("unsigned int i;"); nl();
                 emit("for (i = 0; i < ");
                 pp_expr(di->u.array.e);
                 emit("; i++) {"); push(); nl();
@@ -128,16 +119,28 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 break;
 
         case DECL_VAR_ARRAY:
-                emit("{");
-                push(); nl();
-                pack_type(di->u.var_array.t, v);
-                emit(" *array;"); nl();
-                emit("size_t len;"); nl();
-                pop();
+                emit("{"); push(); nl();
+                emit("unsigned int i;"); nl();
+                emit("xdr_pack_uint(buf, ");
+                {
+                        push_frame(v, "len", 0);
+                        emit_var(v);
+                }
+                emit(");"); nl();
+                emit("for (i = 0; i < ");
+                emit_var(v);
+                pop_frame(v);
+                emit("; i++) {"); push(); nl();
+                subscript_frame(v, "i");
+                pack_type(di->u.var_array.t, v); nl();
+                //pop_frame(v);
+                pop(); emit("}"); pop(); nl();
                 emit("}");
                 break;
 
         case DECL_OPAQUE:
+                break;
+
         case DECL_VAR_OPAQUE:
                 emit("struct {");
                 push(); nl();

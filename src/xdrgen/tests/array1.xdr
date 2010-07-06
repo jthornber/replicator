@@ -9,4 +9,9 @@ struct foo {
        int unlimited<>;
 
        name employees[12];
+
+       struct {
+              int count;
+              float f;
+       } counts<123>;
 };
