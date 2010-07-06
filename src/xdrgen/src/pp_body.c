@@ -121,12 +121,14 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
         case DECL_VAR_ARRAY:
                 emit("{"); push(); nl();
                 emit("unsigned int i;"); nl();
-                emit("xdr_pack_uint(buf, ");
+                // FIXME: check the return value
+                emit("if (!xdr_pack_uint(buf, ");
                 {
                         push_frame(v, "len", 0);
                         emit_var(v);
                 }
-                emit(");"); nl();
+                emit("))"); push(); nl();
+                emit("return 0;"); pop(); nl();
                 emit("for (i = 0; i < ");
                 emit_var(v);
                 pop_frame(v);
@@ -139,19 +141,65 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 break;
 
         case DECL_OPAQUE:
+                emit("{"); push(); nl();
+                emit("if (!xdr_buffer_write(buf, (void *) ");
+                emit_var(v);
+                emit(", ");
+                pp_expr(di->u.opaque.e);
+                emit("))"); push(); nl();
+                emit("return 0;");
+                nl(); pop();
                 break;
 
         case DECL_VAR_OPAQUE:
-                emit("struct {");
+                emit("{");
                 push(); nl();
-                emit("void *data;"); nl();
-                emit("size_t len;"); nl();
+
+                emit("unsigned int i;"); nl();
+                emit("if (!xdr_pack_uint(buf, ");
+                {
+                        push_frame(v, "len", 0);
+                        emit_var(v);
+                }
+                emit("))"); push(); nl();
+                emit("return 0;"); pop(); nl();
+                pop_frame(v);
+
+                emit("if (!xdr_buffer_write(buf, (void *) ");
+                push_frame(v, "data", 0);
+                emit_var(v);
+                pop_frame(v);
+
+                emit(", ");
+
+                push_frame(v, "len", 0);
+                emit_var(v);
+
+                emit("))"); push(); nl();
+                emit("return 0;");
+                nl(); pop();
+
                 pop();
                 emit("}");
                 break;
 
         case DECL_STRING:
-                emit("const char *");
+                emit("{"); push(); nl();
+                emit("unsigned len = strlen(");
+                emit_var(v);
+                emit(");"); nl();
+
+                emit("if (!xdr_pack_uint(buf, len))"); push(); nl();
+                emit("return 0;");
+                pop(); nl();
+
+                emit("if (!xdr_buffer_write(buf, ");
+                emit_var(v);
+                emit(", len))"); push(); nl();
+                emit("return 0;");
+                pop(); nl();
+                pop(); nl();
+                emit("}");
                 break;
 
         case DECL_POINTER:
