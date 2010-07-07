@@ -76,7 +76,7 @@ static void pp_decl_internal(struct decl_internal *di, const char *identifier)
                 break;
 
         case DECL_STRING:
-                emit("const char *%s", identifier);
+                emit("char *%s", identifier);
                 break;
 
         case DECL_POINTER:

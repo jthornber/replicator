@@ -155,7 +155,6 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 emit("{");
                 push(); nl();
 
-                emit("unsigned int i;"); nl();
                 emit("if (!xdr_pack_uint(buf, ");
                 {
                         push_frame(v, "len", 0);
@@ -297,7 +296,7 @@ static void pack_type(struct type *t, var_t v)
 
 static void pack_enum_detail(struct enum_detail *ed, var_t v)
 {
-        emit("if (!xdr_pack_uint(buf, (uint) "); emit_var(v); emit("))"); push(); nl();
+        emit("if (!xdr_pack_uint(buf, (uint) *"); emit_var(v); emit("))"); push(); nl();
         emit("return 0;"); pop(); nl();
 }
 
@@ -328,7 +327,7 @@ static void pack_union_detail(struct union_detail *ud, var_t v)
 {
         struct case_entry *ce;
 
-        emit("switch (input->");
+        emit("switch (");
         push_frame(v, ud->discriminator->u.tother.identifier, 0);
         emit_var(v);
         pop_frame(v);
@@ -376,7 +375,7 @@ static void decl_(struct typedef_ *td)
         }
         pop(); nl(); emit("}"); nl(); nl();
 
-        emit("int xdr_unpack_%s(struct xdr_cursor *c, struct dm_pool *mem, %s **output)",
+        emit("int xdr_unpack_%s(struct xdr_cursor *c, struct pool *mem, %s **output)",
              td->identifier, td->identifier);
         nl();
         emit("{"); push(); nl();
@@ -404,7 +403,9 @@ static void decls_(struct specification *spec)
 
 void print_body(struct specification *spec)
 {
-        emit("#include \"xdr.h\""); nl(); nl();
+        /* FIXME: hack */
+        emit("#include \"protocol.h\""); nl();
+        emit("#include <string.h>"); nl(); nl();
         sep();
         decls_(spec);
         sep();

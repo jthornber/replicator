@@ -46,6 +46,7 @@ LIB_OBJECTS+=\
 # replicator
 REP_DIR=src/replicator/src
 REP_OBJECTS=\
+	$(REP_DIR)/protocol.o \
 	$(REP_DIR)/main.o
 
 $(REP_DIR)/main.o: $(REP_DIR)/protocol.h
@@ -106,6 +107,10 @@ Q=
 .xdr.h:
 	@echo '    [XDRGEN] '$@
 	$(Q)$(XDRGEN) --format header < $< > $@
+
+.xdr.c:
+	@echo '    [XDRGEN] '$@
+	$(Q)$(XDRGEN) --format body < $< > $@
 
 RUBY=ruby1.9 -Ireport-generators/lib -Ireport-generators/test
 
