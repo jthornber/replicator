@@ -62,10 +62,10 @@ struct response {
         unsigned int request_id;
 
         union switch (response_code discriminator) {
-        case ACK:
+        case SUCCESS:
                 void;
 
-        case NACK:
+        case FAIL:
                 string reason<>;
         } outcome;
 };
