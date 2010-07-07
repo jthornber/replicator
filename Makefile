@@ -49,6 +49,9 @@ REP_OBJECTS=\
 	$(REP_DIR)/protocol.o \
 	$(REP_DIR)/main.o
 
+$(REP_DIR)/protocol.h: $(XDRGEN)
+$(REP_DIR)/protocol.c: $(XDRGEN)
+
 $(REP_DIR)/main.o: $(REP_DIR)/protocol.h
 
 bin/replicator: $(REP_OBJECTS)
@@ -95,7 +98,7 @@ lib/libreplicator.a: $(LIB_OBJECTS)
 .PHONEY: test-programs
 test-programs:
 
-Q=
+Q=@
 
 .SUFFIXES:
 .SUFFIXES: .c .o .l .y .xdr .h
@@ -106,11 +109,11 @@ Q=
 
 .xdr.h:
 	@echo '    [XDRGEN] '$@
-	$(Q)$(XDRGEN) --format header < $< > $@
+	$(Q)$(XDRGEN) --format header -o $@ $<
 
 .xdr.c:
 	@echo '    [XDRGEN] '$@
-	$(Q)$(XDRGEN) --format body < $< > $@
+	$(Q)$(XDRGEN) --format body -o $@ $<
 
 RUBY=ruby1.9 -Ireport-generators/lib -Ireport-generators/test
 
