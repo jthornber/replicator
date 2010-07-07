@@ -55,13 +55,10 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
         case DECL_VAR_ARRAY:
                 emit("{"); push(); nl();
                 emit("unsigned int i;"); nl();
-                // FIXME: check the return value
-                emit("if (!xdr_pack_uint(buf, ");
+
                 {
                         var_t v2 = field(v, "len");
-                        emit_var(v2);
-                        emit("))"); push(); nl();
-                        emit("return 0;"); pop(); nl();
+                        pack("uint", v2);
                         emit("for (i = 0; i < ");
                         emit_var(v2);
                 }
@@ -87,10 +84,7 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 emit("{");
                 push(); nl();
 
-                emit("if (!xdr_pack_uint(buf, ");
-                emit_var(field(v, "len"));
-                emit("))"); push(); nl();
-                emit("return 0;"); pop(); nl();
+                pack("uint", field(v, "len"));
 
                 emit("if (!xdr_buffer_write(buf, (void *) ");
                 emit_var(field(v, "data"));
@@ -112,9 +106,7 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 emit_var(v);
                 emit(");"); nl();
 
-                emit("if (!xdr_pack_uint(buf, len))"); push(); nl();
-                emit("return 0;");
-                pop(); nl();
+                pack("uint", top("len"));
 
                 emit("if (!xdr_buffer_write(buf, ");
                 emit_var(v);
