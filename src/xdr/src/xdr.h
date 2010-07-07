@@ -33,7 +33,7 @@ int xdr_buffer_add_block(struct xdr_buffer *buf, void *data, size_t len);
  * atomic semantics, it either succeeds and all the data is written, or it
  * fails and _no_ data is written.
  */
-int xdr_buffer_write(struct xdr_buffer *buf, void *data, size_t len);
+int xdr_buffer_write(struct xdr_buffer *buf, void *data, uint32_t len);
 
 size_t xdr_buffer_size(struct xdr_buffer *buf);
 
@@ -42,7 +42,7 @@ struct xdr_cursor;
 struct xdr_cursor *xdr_cursor_create(struct xdr_buffer *buf);
 void xdr_cursor_destroy(struct xdr_cursor *c);
 int xdr_cursor_forward(struct xdr_cursor *c, size_t offset);
-int xdr_cursor_read(struct xdr_cursor *c, void *data, size_t len);
+int xdr_cursor_read(struct xdr_cursor *c, void *data, uint32_t len);
 
 /*
  * A little utility to do the grunt work of unpacking.
