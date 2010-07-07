@@ -85,7 +85,6 @@ static void pack(const char *fn, var_t v)
         push(); emit("return 0;"); pop();
 }
 
-
 static void pp_expr(struct const_expr *ce)
 {
         switch (ce->type) {
@@ -133,8 +132,10 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 emit_var(v);
                 pop_frame(v);
                 emit("; i++) {"); push(); nl();
+                push_frame(v, "array", 0);
                 subscript_frame(v, "i");
                 pack_type(di->u.var_array.t, v); nl();
+                pop_frame(v);
                 //pop_frame(v);
                 pop(); emit("}"); pop(); nl();
                 emit("}");
@@ -332,7 +333,7 @@ static void pack_union_detail(struct union_detail *ud, var_t v)
         emit_var(v);
         pop_frame(v);
         emit(") {"); push(); nl();
-
+        push_frame(v, "u", 0);
         {
                 list_iterate_items(ce, &ud->cases) {
                         emit("case ");
@@ -354,6 +355,7 @@ static void pack_union_detail(struct union_detail *ud, var_t v)
                         emit("}"); nl();
                 }
         }
+        pop_frame(v);
         pop();
         emit("}"); nl();
 }
@@ -409,7 +411,6 @@ void print_body(struct specification *spec)
         sep();
         decls_(spec);
         sep();
-        emit("#endif\n");
 }
 
 /*----------------------------------------------------------------*/
