@@ -11,60 +11,59 @@
  *  eg, input->u.foo
  */
 struct var_frame {
-        struct list list;
+        struct var_frame *next;
 
         const char *name;
         const char *subscript;
         int is_pointer;
 };
 
-typedef struct list *var_t;
+typedef struct var_frame *var_t;
+static struct var_frame *empty_var = NULL;
 
-var_t new_var()
+static var_t new_var()
 {
         var_t v = zalloc(sizeof(*v));
-        list_init(v);
         return v;
 }
 
-void push_frame(var_t v, const char *name, int is_pointer)
+static var_t push_frame(var_t v, const char *name, int is_pointer)
 {
-        struct var_frame *f = zalloc(sizeof(*f));
+        struct var_frame *f = new_var();
+        f->next = v;
         f->name = dup_string(name);
         f->subscript = NULL;
         f->is_pointer = is_pointer;
-        list_add(v, &f->list);
+        return f;
 }
 
-void subscript_frame(var_t v, const char *subscript)
+static var_t subscript_frame(var_t v, const char *subscript)
 {
-        struct var_frame *f = list_item(list_last(v), struct var_frame);
+        struct var_frame *f = new_var();
+        f->next = v;
         f->subscript = dup_string(subscript);
+        return f;
 }
 
-void pop_frame(var_t v)
+static void emit_var_elt(var_t v)
 {
-        list_del(list_last(v));
+        if (v->name)
+                emit("%s", v->name);
+        else if (v->subscript)
+                emit("[%s]", v->subscript);
 }
 
-void emit_var(var_t v)
+static int emit_var(var_t v)
 {
-        int first = 1;
         int last_was_pointer = 0;
-        struct var_frame *f;
-
-        list_iterate_items(f, v) {
-                if (!first)
+        if (v->next) {
+                last_was_pointer = emit_var(v->next);
+                if (!v->subscript)
                         emit(last_was_pointer ? "->" : ".");
-                else
-                        first = 0;
-
-                emit(f->name);
-                if (f->subscript)
-                        emit("[%s]", f->subscript);
-
-                last_was_pointer = f->is_pointer;
         }
+
+        emit_var_elt(v);
+        return v->is_pointer;
 }
 
 /*----------------------------------------------------------------*/
@@ -123,20 +122,19 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 // FIXME: check the return value
                 emit("if (!xdr_pack_uint(buf, ");
                 {
-                        push_frame(v, "len", 0);
-                        emit_var(v);
+                        var_t v2 = push_frame(v, "len", 0);
+                        emit_var(v2);
+                        emit("))"); push(); nl();
+                        emit("return 0;"); pop(); nl();
+                        emit("for (i = 0; i < ");
+                        emit_var(v2);
                 }
-                emit("))"); push(); nl();
-                emit("return 0;"); pop(); nl();
-                emit("for (i = 0; i < ");
-                emit_var(v);
-                pop_frame(v);
                 emit("; i++) {"); push(); nl();
-                push_frame(v, "array", 0);
-                subscript_frame(v, "i");
-                pack_type(di->u.var_array.t, v); nl();
-                pop_frame(v);
-                //pop_frame(v);
+                {
+                        var_t v2 = push_frame(v, "array", 0);
+                        var_t v3 = subscript_frame(v2, "i");
+                        pack_type(di->u.var_array.t, v3); nl();
+                }
                 pop(); emit("}"); pop(); nl();
                 emit("}");
                 break;
@@ -158,22 +156,24 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
 
                 emit("if (!xdr_pack_uint(buf, ");
                 {
-                        push_frame(v, "len", 0);
-                        emit_var(v);
+                        var_t v2 = push_frame(v, "len", 0);
+                        emit_var(v2);
                 }
                 emit("))"); push(); nl();
                 emit("return 0;"); pop(); nl();
-                pop_frame(v);
 
                 emit("if (!xdr_buffer_write(buf, (void *) ");
-                push_frame(v, "data", 0);
-                emit_var(v);
-                pop_frame(v);
+                {
+                        var_t v2 = push_frame(v, "data", 0);
+                        emit_var(v2);
+                }
 
                 emit(", ");
 
-                push_frame(v, "len", 0);
-                emit_var(v);
+                {
+                        var_t v2 = push_frame(v, "len", 0);
+                        emit_var(v2);
+                }
 
                 emit("))"); push(); nl();
                 emit("return 0;");
@@ -225,8 +225,7 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
 
 static void pack_typedef_internal(struct typedef_internal *ti)
 {
-        var_t v = new_var();
-        push_frame(v, "input", 1);
+        var_t v = push_frame(empty_var, "input", 1);
         switch (ti->type) {
         case DEF_SIMPLE:
                 pack_decl_internal(ti->u.tsimple.di, v);
@@ -317,10 +316,11 @@ static void pack_decl(struct decl *d, var_t v)
                 break;
 
         case DECL_OTHER:
-                push_frame(v, d->u.tother.identifier, 0);
-                pack_decl_internal(d->u.tother.di, v);
-                pop_frame(v);
+        {
+                var_t v2 = push_frame(v, d->u.tother.identifier, 0);
+                pack_decl_internal(d->u.tother.di, v2);
                 break;
+        }
         }
 }
 
@@ -329,33 +329,35 @@ static void pack_union_detail(struct union_detail *ud, var_t v)
         struct case_entry *ce;
 
         emit("switch (");
-        push_frame(v, ud->discriminator->u.tother.identifier, 0);
-        emit_var(v);
-        pop_frame(v);
-        emit(") {"); push(); nl();
-        push_frame(v, "u", 0);
         {
-                list_iterate_items(ce, &ud->cases) {
-                        emit("case ");
-                        pp_expr(ce->ce);
-                        emit(": {"); push(); nl();
-                        pack_decl(ce->d, v); nl();
-                        emit("break;"); nl();
-                        pop();
-                        emit("}");
-                        nl(); nl();
-                }
+                var_t v2 = push_frame(v, ud->discriminator->u.tother.identifier, 0);
+                emit_var(v2);
+        }
+        emit(") {"); push(); nl();
+        {
+                var_t v2 = push_frame(v, "u", 0);
+                {
+                        list_iterate_items(ce, &ud->cases) {
+                                emit("case ");
+                                pp_expr(ce->ce);
+                                emit(": {"); push(); nl();
+                                pack_decl(ce->d, v2); nl();
+                                emit("break;"); nl();
+                                pop();
+                                emit("}");
+                                nl(); nl();
+                        }
 
-                if (ud->default_case) {
-                        emit("default: {"); nl();
-                        push();
-                        pack_decl(ud->default_case, v); nl();
-                        emit("break;"); nl();
-                        pop();
-                        emit("}"); nl();
+                        if (ud->default_case) {
+                                emit("default: {"); nl();
+                                push();
+                                pack_decl(ud->default_case, v2); nl();
+                                emit("break;"); nl();
+                                pop();
+                                emit("}"); nl();
+                        }
                 }
         }
-        pop_frame(v);
         pop();
         emit("}"); nl();
 }
