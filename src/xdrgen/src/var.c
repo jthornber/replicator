@@ -84,15 +84,13 @@ void emit_var(var_t v)
                 break;
 
         case VT_DEREF:
-                emit("*(");
+                emit("*");
                 emit_var(v->v);
-                emit(")");
                 break;
 
         case VT_REF:
-                emit("&(");
+                emit("&");
                 emit_var(v->v);
-                emit(")");
                 break;
 
         case VT_SUBSCRIPT:
