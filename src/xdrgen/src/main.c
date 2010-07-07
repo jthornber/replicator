@@ -29,14 +29,17 @@ struct format *lookup_format(const char *str)
 
 void usage()
 {
-        fprintf(stderr, "usage: xdrgen --format <format>\n");
+        fprintf(stderr, "usage: xdrgen --format <format> [-o <file>] <file>\n");
         exit(1);
 }
+
+extern FILE *yyin;
 
 int main(int argc, char **argv)
 {
         int i, r;
         struct format *f;
+        const char *input = NULL, *output = NULL;
 
         for (i = 1; i < argc; i++) {
                 if (!strcmp(argv[i], "--format")) {
@@ -48,9 +51,30 @@ int main(int argc, char **argv)
                                 fprintf(stderr, "unkown format\n");
                                 usage();
                         }
+                        i++;
+
                 } else if (!strcmp(argv[i], "--debug")) {
                         yydebug = 1;
+
+                } else if (!strcmp(argv[i], "-o")) {
+                        if (i + 1 == argc)
+                                usage();
+
+                        output = argv[i + 1];
+                        i++;
+                } else {
+                        if (input) {
+                                fprintf(stderr, "multiple input files specified.\n");
+                                usage();
+                        }
+
+                        input = argv[i];
                 }
+        }
+
+        if (!input) {
+                fprintf(stderr, "no input file specified\n");
+                usage();
         }
 
         if (!f) {
@@ -59,6 +83,13 @@ int main(int argc, char **argv)
         }
 
         init();
+
+        yyin = fopen(input, "r");
+        if (!yyin) {
+                fprintf(stderr, "Couldn't open '%s'\n", input);
+                exit(1);
+        }
+
         r = yyparse();
         f->fn(get_result());
         fin();
