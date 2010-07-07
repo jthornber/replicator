@@ -242,9 +242,11 @@ static void pack_decl(struct decl *d, var_t v)
 static void pack_union_detail(struct union_detail *ud, var_t v)
 {
         struct case_entry *ce;
+        var_t discriminator = field(v, ud->discriminator->u.tother.identifier);
+        pack_decl(ud->discriminator, v); nl(); nl();
 
         emit("switch (");
-        emit_var(field(v, ud->discriminator->u.tother.identifier));
+        emit_var(discriminator);
         emit(") {"); push(); nl();
         {
                 var_t v2 = field(v, "u");
@@ -274,6 +276,278 @@ static void pack_union_detail(struct union_detail *ud, var_t v)
         emit("}"); nl();
 }
 
+/*----------------------------------------------------------------*/
+
+static void unpack_type(struct type *t, var_t v);
+static void unpack_enum_detail(struct enum_detail *ed, var_t v);
+static void unpack_struct_detail(struct struct_detail *sd, var_t v);
+static void unpack_union_detail(struct union_detail *ud, var_t v);
+static void unpack_decl(struct decl *d, var_t v);
+
+/*----------------------------------------------------------------*/
+
+
+static void unpack(const char *fn, var_t v)
+{
+        emit("if (!xdr_unpack_%s(c, ", fn);
+        emit_var(ref(v));
+        emit("))"); nl();
+        push(); emit("return 0;"); nl(); pop();
+}
+
+static void unpack_decl_internal(struct decl_internal *di, var_t v)
+{
+        switch (di->type) {
+        case DECL_SIMPLE:
+                unpack_type(di->u.simple.t, v);
+                break;
+
+        case DECL_ARRAY:
+                emit("{"); push(); nl();
+                emit("unsigned int i;"); nl();
+                emit("for (i = 0; i < ");
+                pp_expr(di->u.array.e);
+                emit("; i++) {"); push(); nl();
+                unpack_type(di->u.array.t, subscript(v, "i"));
+                pop(); nl(); emit("}");
+                pop(); nl(); emit("}");
+                break;
+
+        case DECL_VAR_ARRAY:
+                emit("{"); push(); nl();
+                emit("unsigned int i;"); nl();
+
+                {
+                        var_t v2 = field(v, "len");
+                        unpack("uint", v2);
+                        emit("for (i = 0; i < ");
+                        emit_var(v2);
+                }
+                emit("; i++) {"); push(); nl();
+                unpack_type(di->u.var_array.t,
+                          subscript(field(v, "array"), "i")); nl();
+                pop(); emit("}"); pop(); nl();
+                emit("}");
+                break;
+
+        case DECL_OPAQUE:
+                emit("{"); push(); nl();
+                emit("if (!xdr_cursor_read(c, (void *) ");
+                emit_var(v);
+                emit(", ");
+                pp_expr(di->u.opaque.e);
+                emit("))"); push(); nl();
+                emit("return 0;");
+                nl(); pop();
+                break;
+
+        case DECL_VAR_OPAQUE:
+                emit("{");
+                push(); nl();
+
+                unpack("uint", field(v, "len"));
+
+                emit("if (!xdr_cursor_read(c, (void *) ");
+                emit_var(field(v, "data"));
+
+                emit(", ");
+                emit_var(field(v, "len"));
+
+                emit("))"); push(); nl();
+                emit("return 0;");
+                nl(); pop();
+
+                pop();
+                emit("}");
+                break;
+
+        case DECL_STRING:
+                emit("{"); push(); nl();
+                emit("uint32_t len;"); nl();
+                unpack("uint", top("len"));
+                emit("if (!(");
+                emit_var(v);
+                emit(" = pool_alloc(mem, len + 1)))"); push(); nl();
+                emit("return 0;"); nl(); pop();
+
+                emit("if (!xdr_cursor_read(c, ");
+                emit_var(v);
+                emit(", len))"); push(); nl();
+                emit("return 0;");
+                pop(); nl();
+
+                emit_var(v);
+                emit("[len] = '\\0';"); nl();
+                pop(); nl();
+                emit("}");
+                break;
+
+        case DECL_POINTER: {
+                var_t flag = top("has_value");
+                emit("uint32_t has_value;"); nl();
+                unpack("uint", flag);
+
+                emit("if ("); emit_var(flag); emit(") {"); push(); nl();
+                unpack_type(di->u.pointer.t, v);
+                pop(); nl(); emit("} else {"); push(); nl();
+                emit_var(v); emit(" = NULL;");
+                pop(); nl(); emit("}");
+                break;
+        }
+        }
+}
+
+static void unpack_typedef_internal(struct typedef_internal *ti)
+{
+        var_t v = top("output");
+
+        emit("if (!("); emit_var(deref(v));
+        emit(" = pool_alloc(mem, sizeof(");
+        emit_var(deref(deref(v)));
+        emit("))))"); push(); nl();
+        emit("return 0;"); pop(); nl();
+
+        v = deref(deref(v));
+
+        switch (ti->type) {
+        case DEF_SIMPLE:
+                unpack_decl_internal(ti->u.tsimple.di, v);
+                break;
+
+        case DEF_ENUM:
+                unpack_enum_detail(ti->u.tenum.ed, v);
+                break;
+
+        case DEF_STRUCT:
+                unpack_struct_detail(ti->u.tstruct.sd, v);
+                break;
+
+        case DEF_UNION:
+                unpack_union_detail(ti->u.tunion.ud, v);
+                break;
+        }
+}
+
+static void unpack_type(struct type *t, var_t v)
+{
+        switch (t->type) {
+        case TINT:
+                unpack("int", v);
+                break;
+
+        case TUINT:
+                unpack("uint", v);
+                break;
+
+        case THYPER:
+                unpack("hyper", v);
+                break;
+
+        case TUHYPER:
+                unpack("uhyper", v);
+                break;
+
+        case TFLOAT:
+                unpack("float", v);
+                break;
+
+        case TDOUBLE:
+                unpack("double", v);
+                break;
+
+        case TBOOL:
+                unpack("bool", v);
+                break;
+
+        case TENUM:
+                unpack_enum_detail(t->u.tenum.ed, v);
+                break;
+
+        case TSTRUCT:
+                unpack_struct_detail(t->u.tstruct.sd, v);
+                break;
+
+        case TUNION:
+                unpack_union_detail(t->u.tunion.ud, v);
+                break;
+
+        case TTYPEDEF:
+                unpack(t->u.ttypedef.t, ref(v));
+                break;
+        }
+}
+
+static void unpack_enum_detail(struct enum_detail *ed, var_t v)
+{
+        emit("if (!xdr_unpack_uint(c, (uint *) "); emit_var(v); emit("))"); push(); nl();
+        emit("return 0;"); pop(); nl();
+}
+
+static void unpack_struct_detail(struct struct_detail *sd, var_t v)
+{
+        struct decl *d;
+
+        list_iterate_items(d, &sd->decls) {
+                unpack_decl(d, v); nl();
+        }
+}
+
+static void unpack_decl(struct decl *d, var_t v)
+{
+        switch(d->type) {
+        case DECL_VOID:
+                break;
+
+        case DECL_OTHER:
+        {
+
+                var_t v2 = field(v, d->u.tother.identifier);
+                unpack_decl_internal(d->u.tother.di, v2);
+                break;
+        }
+        }
+}
+
+static void unpack_union_detail(struct union_detail *ud, var_t v)
+{
+        struct case_entry *ce;
+        var_t discriminator = field(v, ud->discriminator->u.tother.identifier);
+        unpack_decl(ud->discriminator, v);
+
+        emit("switch (");
+        emit_var(discriminator);
+        emit(") {"); push(); nl();
+        {
+                var_t v2 = field(v, "u");
+                {
+                        list_iterate_items(ce, &ud->cases) {
+                                emit("case ");
+                                pp_expr(ce->ce);
+                                emit(": {"); push(); nl();
+                                unpack_decl(ce->d, v2); nl();
+                                emit("break;"); nl();
+                                pop();
+                                emit("}");
+                                nl(); nl();
+                        }
+
+                        if (ud->default_case) {
+                                emit("default: {"); nl();
+                                push();
+                                unpack_decl(ud->default_case, v2); nl();
+                                emit("break;"); nl();
+                                pop();
+                                emit("}"); nl();
+                        }
+                }
+        }
+        pop();
+        emit("}"); nl();
+}
+
+
+/*----------------------------------------------------------------*/
+
 static void sep()
 {
         emit("/*----------------------------------------------------------------*/\n\n");
@@ -296,7 +570,8 @@ static void decl_(struct typedef_ *td)
         nl();
         emit("{"); push(); nl();
         {
-                emit("return 0;");
+                unpack_typedef_internal(td->ti);
+                emit("return 1;");
         }
         pop(); nl(); emit("}"); nl();
 }

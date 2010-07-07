@@ -55,7 +55,7 @@ static void pp_decl_internal(struct decl_internal *di, const char *identifier)
                 push(); nl();
                 pp_type(di->u.var_array.t);
                 emit(" *array;"); nl();
-                emit("size_t len;"); nl();
+                emit("uint32_t len;"); nl();
                 pop();
                 emit("} %s", identifier);
                 break;
@@ -70,7 +70,7 @@ static void pp_decl_internal(struct decl_internal *di, const char *identifier)
                 emit("struct {");
                 push(); nl();
                 emit("uint8_t *data;"); nl();
-                emit("size_t len;"); nl();
+                emit("uint32_t len;"); nl();
                 pop();
                 emit("} %s", identifier);
                 break;
