@@ -10,16 +10,21 @@
  *
  *  eg, input->u.foo
  */
-struct var_frame {
-        struct var_frame *next;
-
-        const char *name;
-        const char *subscript;
-        int is_pointer;
+enum var_type {
+        VT_TOP,
+        VT_FIELD,
+        VT_DEREF,
+        VT_REF,
+        VT_SUBSCRIPT
 };
 
-typedef struct var_frame *var_t;
-static struct var_frame *empty_var = NULL;
+struct var {
+        enum var_type t;
+        struct var *v;
+        const char *str;
+};
+
+typedef struct var *var_t;
 
 static var_t new_var()
 {
@@ -27,43 +32,79 @@ static var_t new_var()
         return v;
 }
 
-static var_t push_frame(var_t v, const char *name, int is_pointer)
+static var_t top(const char *str)
 {
-        struct var_frame *f = new_var();
-        f->next = v;
-        f->name = dup_string(name);
-        f->subscript = NULL;
-        f->is_pointer = is_pointer;
-        return f;
+        var_t r = new_var();
+        r->t = VT_TOP;
+        r->str = str;
+        return r;
 }
 
-static var_t subscript_frame(var_t v, const char *subscript)
+static var_t field(var_t v, const char *str)
 {
-        struct var_frame *f = new_var();
-        f->next = v;
-        f->subscript = dup_string(subscript);
-        return f;
+        var_t r = new_var();
+        r->t = VT_FIELD;
+        r->v = v;
+        r->str = str;
+        return r;
 }
 
-static void emit_var_elt(var_t v)
+static var_t deref(var_t v)
 {
-        if (v->name)
-                emit("%s", v->name);
-        else if (v->subscript)
-                emit("[%s]", v->subscript);
+        var_t r = new_var();
+        r->t = VT_DEREF;
+        r->v = v;
+        return r;
 }
 
-static int emit_var(var_t v)
+static var_t ref(var_t v)
 {
-        int last_was_pointer = 0;
-        if (v->next) {
-                last_was_pointer = emit_var(v->next);
-                if (!v->subscript)
-                        emit(last_was_pointer ? "->" : ".");
+        var_t r = new_var();
+        r->t = VT_REF;
+        r->v = v;
+        return r;
+}
+
+static var_t subscript(var_t v, const char *str)
+{
+        var_t r = new_var();
+        r->t = VT_SUBSCRIPT;
+        r->v = v;
+        r->str = str;
+        return r;
+}
+
+static void emit_var(var_t v)
+{
+        emit("(");
+        switch (v->t) {
+        case VT_TOP:
+                emit("%s", v->str);
+                break;
+
+        case VT_FIELD:
+                emit_var(v->v);
+                emit(".%s", v->str);
+                break;
+
+        case VT_DEREF:
+                emit("*(");
+                emit_var(v->v);
+                emit(")");
+                break;
+
+        case VT_REF:
+                emit("&(");
+                emit_var(v->v);
+                emit(")");
+                break;
+
+        case VT_SUBSCRIPT:
+                emit_var(v->v);
+                emit("[%s]", v->str);
+                break;
         }
-
-        emit_var_elt(v);
-        return v->is_pointer;
+        emit(")");
 }
 
 /*----------------------------------------------------------------*/
@@ -110,8 +151,11 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 emit("for (i = 0; i < ");
                 pp_expr(di->u.array.e);
                 emit("; i++) {"); push(); nl();
-                subscript_frame(v, "i");
-                pack_type(di->u.array.t, v);
+                {
+                        var_t v2 = subscript(v, "i");
+                        var_t v3 = ref(v2);
+                        pack_type(di->u.array.t, v3);
+                }
                 pop(); nl(); emit("}");
                 pop(); nl(); emit("}");
                 break;
@@ -122,7 +166,7 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 // FIXME: check the return value
                 emit("if (!xdr_pack_uint(buf, ");
                 {
-                        var_t v2 = push_frame(v, "len", 0);
+                        var_t v2 = field(v, "len");
                         emit_var(v2);
                         emit("))"); push(); nl();
                         emit("return 0;"); pop(); nl();
@@ -131,9 +175,8 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 }
                 emit("; i++) {"); push(); nl();
                 {
-                        var_t v2 = push_frame(v, "array", 0);
-                        var_t v3 = subscript_frame(v2, "i");
-                        pack_type(di->u.var_array.t, v3); nl();
+                        var_t v2 = ref(subscript(field(v, "array"), "i"));
+                        pack_type(di->u.var_array.t, v2); nl();
                 }
                 pop(); emit("}"); pop(); nl();
                 emit("}");
@@ -156,7 +199,7 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
 
                 emit("if (!xdr_pack_uint(buf, ");
                 {
-                        var_t v2 = push_frame(v, "len", 0);
+                        var_t v2 = field(v, "len");
                         emit_var(v2);
                 }
                 emit("))"); push(); nl();
@@ -164,14 +207,14 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
 
                 emit("if (!xdr_buffer_write(buf, (void *) ");
                 {
-                        var_t v2 = push_frame(v, "data", 0);
+                        var_t v2 = field(v, "data");
                         emit_var(v2);
                 }
 
                 emit(", ");
 
                 {
-                        var_t v2 = push_frame(v, "len", 0);
+                        var_t v2 = field(v, "len");
                         emit_var(v2);
                 }
 
@@ -225,7 +268,7 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
 
 static void pack_typedef_internal(struct typedef_internal *ti)
 {
-        var_t v = push_frame(empty_var, "input", 1);
+        var_t v = deref(top("input"));
         switch (ti->type) {
         case DEF_SIMPLE:
                 pack_decl_internal(ti->u.tsimple.di, v);
@@ -289,14 +332,14 @@ static void pack_type(struct type *t, var_t v)
                 break;
 
         case TTYPEDEF:
-                pack(t->u.ttypedef.t, v);
+                pack(t->u.ttypedef.t, ref(v));
                 break;
         }
 }
 
 static void pack_enum_detail(struct enum_detail *ed, var_t v)
 {
-        emit("if (!xdr_pack_uint(buf, (uint) *"); emit_var(v); emit("))"); push(); nl();
+        emit("if (!xdr_pack_uint(buf, (uint) "); emit_var(v); emit("))"); push(); nl();
         emit("return 0;"); pop(); nl();
 }
 
@@ -317,7 +360,7 @@ static void pack_decl(struct decl *d, var_t v)
 
         case DECL_OTHER:
         {
-                var_t v2 = push_frame(v, d->u.tother.identifier, 0);
+                var_t v2 = field(v, d->u.tother.identifier);
                 pack_decl_internal(d->u.tother.di, v2);
                 break;
         }
@@ -330,12 +373,12 @@ static void pack_union_detail(struct union_detail *ud, var_t v)
 
         emit("switch (");
         {
-                var_t v2 = push_frame(v, ud->discriminator->u.tother.identifier, 0);
+                var_t v2 = field(v, ud->discriminator->u.tother.identifier);
                 emit_var(v2);
         }
         emit(") {"); push(); nl();
         {
-                var_t v2 = push_frame(v, "u", 0);
+                var_t v2 = field(v, "u");
                 {
                         list_iterate_items(ce, &ud->cases) {
                                 emit("case ");
