@@ -5,6 +5,13 @@
 
 /*----------------------------------------------------------------*/
 
+FILE *output_;
+
+void set_output_file(FILE *f)
+{
+        output_ = f;
+}
+
 static unsigned indent_ = 0;
 
 enum {
@@ -24,16 +31,16 @@ void emit(const char *fmt, ...)
         if (newline_) {
                 int i;
                 for (i = 0; i < indent_; i++)
-                        printf(" ");
+                        fprintf(output_, " ");
                 newline_ = 0;
         }
-        vprintf(fmt, ap);
+        vfprintf(output_, fmt, ap);
         va_end(ap);
 }
 
 void nl()
 {
-        printf("\n");
+        fprintf(output_, "\n");
         newline_ = 1;
 }
 

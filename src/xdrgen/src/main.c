@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "emit.h"
 #include "xdrgen.h"
 #include "pretty_print.h"
 
@@ -40,6 +41,7 @@ int main(int argc, char **argv)
         int i, r;
         struct format *f;
         const char *input = NULL, *output = NULL;
+        FILE *out;
 
         for (i = 1; i < argc; i++) {
                 if (!strcmp(argv[i], "--format")) {
@@ -90,8 +92,24 @@ int main(int argc, char **argv)
                 exit(1);
         }
 
+        if (!output)
+                set_output_file(stdout);
+        else {
+                out = fopen(output, "w");
+                if (!out) {
+                        fprintf(stderr, "unable to open '%s'", output);
+                        exit(1);
+                }
+                set_output_file(out);
+        }
+
         r = yyparse();
         f->fn(get_result());
+
+        fclose(yyin);
+        if (output)
+                fclose(out);
+
         fin();
 
         return r;
