@@ -51,6 +51,7 @@ REP_OBJECTS=\
 
 $(REP_DIR)/protocol.h: $(XDRGEN)
 $(REP_DIR)/protocol.c: $(XDRGEN)
+$(REP_DIR)/protocol.o: $(REP_DIR)/protocol.h
 
 $(REP_DIR)/main.o: $(REP_DIR)/protocol.h
 
