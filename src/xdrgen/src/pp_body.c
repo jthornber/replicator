@@ -47,11 +47,7 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 emit("for (i = 0; i < ");
                 pp_expr(di->u.array.e);
                 emit("; i++) {"); push(); nl();
-                {
-                        var_t v2 = subscript(v, "i");
-                        var_t v3 = ref(v2);
-                        pack_type(di->u.array.t, v3);
-                }
+                pack_type(di->u.array.t, subscript(v, "i"));
                 pop(); nl(); emit("}");
                 pop(); nl(); emit("}");
                 break;
@@ -70,10 +66,8 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                         emit_var(v2);
                 }
                 emit("; i++) {"); push(); nl();
-                {
-                        var_t v2 = ref(subscript(field(v, "array"), "i"));
-                        pack_type(di->u.var_array.t, v2); nl();
-                }
+                pack_type(di->u.var_array.t,
+                          subscript(field(v, "array"), "i")); nl();
                 pop(); emit("}"); pop(); nl();
                 emit("}");
                 break;
@@ -94,25 +88,15 @@ static void pack_decl_internal(struct decl_internal *di, var_t v)
                 push(); nl();
 
                 emit("if (!xdr_pack_uint(buf, ");
-                {
-                        var_t v2 = field(v, "len");
-                        emit_var(v2);
-                }
+                emit_var(field(v, "len"));
                 emit("))"); push(); nl();
                 emit("return 0;"); pop(); nl();
 
                 emit("if (!xdr_buffer_write(buf, (void *) ");
-                {
-                        var_t v2 = field(v, "data");
-                        emit_var(v2);
-                }
+                emit_var(field(v, "data"));
 
                 emit(", ");
-
-                {
-                        var_t v2 = field(v, "len");
-                        emit_var(v2);
-                }
+                emit_var(field(v, "len"));
 
                 emit("))"); push(); nl();
                 emit("return 0;");
@@ -268,10 +252,7 @@ static void pack_union_detail(struct union_detail *ud, var_t v)
         struct case_entry *ce;
 
         emit("switch (");
-        {
-                var_t v2 = field(v, ud->discriminator->u.tother.identifier);
-                emit_var(v2);
-        }
+        emit_var(field(v, ud->discriminator->u.tother.identifier));
         emit(") {"); push(); nl();
         {
                 var_t v2 = field(v, "u");
