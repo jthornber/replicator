@@ -131,7 +131,9 @@ void csp_yield()
 
 void csp_sleep(unsigned milli)
 {
+        csp_yield();
 
+        /* FIXME: finish */
 }
 
 /*----------------------------------------------------------------*/
