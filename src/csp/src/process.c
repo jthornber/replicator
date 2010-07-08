@@ -3,8 +3,11 @@
 #include "datastruct/list.h"
 
 #include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/times.h>
 #include <time.h>
 #include <ucontext.h>
@@ -17,6 +20,9 @@ struct process {
 
         ucontext_t cpu_state;
         void *stack;
+
+        /* io manager fields */
+        struct epoll_event ev;
 
         unsigned timeslice_remaining;
 };
@@ -130,6 +136,96 @@ void csp_sleep(unsigned milli)
 
 /*----------------------------------------------------------------*/
 
+/* io manager */
+static LIST_INIT(ios_);
+static int epoll_fd;
+
+enum io_type {
+        READ,
+        WRITE
+};
+
+static void io_init()
+{
+        epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+        assert(epoll_fd >= 0);
+}
+
+static void io_exit()
+{
+        close(epoll_fd);
+}
+
+static int io_wait(process_t p, int fd, enum io_type direction)
+{
+        p->ev.events = (direction == READ ? EPOLLIN : EPOLLOUT) | EPOLLET;
+        p->ev.data.ptr = p;
+        p->ev.data.fd = fd;
+        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &p->ev) == -1)
+                return 0;
+        list_move(&ios_, &p->list);
+        csp_yield();
+        return 1;
+}
+
+enum {
+        MAX_EVENTS = 10
+};
+
+static void io_check(unsigned milli)
+{
+        int i;
+        struct epoll_event events[MAX_EVENTS];
+        int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, milli);
+        if (nfds == -1)
+                // FIXME: log
+                return;
+
+        for (i = 0; i < nfds; i++) {
+                process_t p = (process_t) events[i].data.ptr;
+
+                if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, p->ev.data.fd, &p->ev) == -1) {
+                        /* FIXME: log something */
+                }
+
+                list_move(&schedulable_, &p->list);
+        }
+}
+
+ssize_t csp_read(int fd, void *buf, size_t count)
+{
+        for (;;) {
+                int n = read(fd, buf, count);
+                if (n < 0 && errno == EAGAIN)
+                        io_wait(csp_self(), fd, READ);
+                else {
+                        csp_yield();
+                        return n;
+                }
+        }
+}
+
+ssize_t csp_write(int fd, const void *buf, size_t count)
+{
+        for (;;) {
+                int n = write(fd, buf, count);
+                if (n < 0 && errno == EAGAIN)
+                        io_wait(csp_self(), fd, WRITE);
+                else {
+                        csp_yield();
+                        return n;
+                }
+        }
+}
+
+void csp_set_non_blocking(int fd)
+{
+        fcntl(fd, F_SETFL, O_NONBLOCK);
+}
+
+
+/*----------------------------------------------------------------*/
+
 /*
  * Scheduler.
  */
@@ -150,12 +246,7 @@ static void schedule()
 
         /* move current process to the back of the runnable list */
         list_move(&schedulable_, &current->list);
-
-        /*
-         * FIXME: need to see if any io or sleeping threads can now
-         * proceed.
-         */
-
+        io_check(0);
         get_current()->timeslice_remaining = TIMESLICE;
         swapcontext(&scheduler_, &get_current()->cpu_state);
 }
@@ -179,10 +270,12 @@ int csp_start()
 
 void csp_init()
 {
+        io_init();
 }
 
 void csp_exit()
 {
+        io_exit();
 }
 
 /*----------------------------------------------------------------*/

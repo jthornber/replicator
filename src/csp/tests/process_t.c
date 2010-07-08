@@ -3,24 +3,40 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 
-void print(void *context)
+static unsigned counter = 0;
+
+enum {
+        TARGET = 1000000
+};
+
+void inc(void *_)
 {
-        const char *msg = (const char *) context;
-
-        for (;;) {
-                printf("%s\n", msg);
-                csp_yield(0);
+        while (counter < TARGET) {
+                counter++;
+                csp_yield();
         }
 }
 
 int main(int argc, char **argv)
 {
+        unsigned nr_processes = 2;
+
+        if (argc == 2)
+                nr_processes = atoi(argv[1]);
+
         csp_init();
 
-        csp_spawn(print, "hello from process 1");
-        csp_spawn(print, "hello from process 2");
+        printf("creating %d processes ...", nr_processes);
+        while (nr_processes--)
+                csp_spawn(inc, NULL);
+        printf(" done\n");
+        printf("running ...");
         csp_start();
+        printf(" done\n");
+
+        printf("%d context switches occurred\n", TARGET);
 
         csp_exit();
 
