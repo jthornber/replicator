@@ -33,6 +33,7 @@ static void *launch_arg_ = NULL;
 static ucontext_t *launch_cpu_state_;
 
 static LIST_INIT(schedulable_);
+static LIST_INIT(dead_);
 
 void init_process()
 {
@@ -48,6 +49,7 @@ void init_process()
 
         /* we get here when this process is scheduled properly */
         fn(arg);
+        list_move(&dead_, &csp_self()->list);
 }
 
 process_t csp_spawn(process_fn fn, void *context)
@@ -116,7 +118,7 @@ void csp_kill(process_t pid)
         free_process(pid);
 }
 
-void csp_yield(int force)
+void csp_yield()
 {
         swapcontext(&get_current()->cpu_state, &scheduler_);
 }
@@ -131,7 +133,17 @@ void csp_sleep(unsigned milli)
 /*
  * Scheduler.
  */
-static void schedule_()
+static void reap()
+{
+        process_t p, tmp;
+
+        list_iterate_items_safe (p, tmp, &dead_) {
+                list_del(&p->list);
+                free_process(p);
+        }
+}
+
+static void schedule()
 {
         /* look at the time slice for the current process */
         process_t current = get_current();
@@ -155,10 +167,11 @@ int csp_start()
         getcontext(&scheduler_);
 
         for (;;) {
+                reap();
                 if (list_empty(&schedulable_)) /* FIXME: conjunction with other lists */
                         break;
                 else
-                        schedule_();
+                        schedule();
         }
 
         return 1;

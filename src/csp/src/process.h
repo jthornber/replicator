@@ -13,7 +13,7 @@ typedef void (*process_fn)(void *);
 process_t csp_spawn(process_fn fn, void *context);
 process_t csp_self();
 void csp_kill(process_t pid);
-void csp_yield(int force);
+void csp_yield();
 void csp_sleep(unsigned milli);
 
 /*----------------------------------------------------------------*/

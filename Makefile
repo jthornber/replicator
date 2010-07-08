@@ -33,6 +33,10 @@ $(CSP_TEST)/process_t: $(CSP_TEST)/process_t.c lib/libreplicator.a
 	@echo '    [CC] '$@
 	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< -Llib -lreplicator
 
+$(CSP_TEST)/process1_t: $(CSP_TEST)/process1_t.c lib/libreplicator.a
+	@echo '    [CC] '$@
+	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< -Llib -lreplicator
+
 # datastruct
 DS_DIR=src/datastruct/src
 LIB_OBJECTS+=\
