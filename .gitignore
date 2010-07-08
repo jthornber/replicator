@@ -11,3 +11,5 @@ include/*
 
 src/replicator/src/protocol.[hc]
 reports/
+
+*_t

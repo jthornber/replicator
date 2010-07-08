@@ -7,7 +7,8 @@
 
 /* Communicating, Sequential Processes */
 
-typedef uint32_t process_t;
+struct process;
+typedef struct process *process_t;
 typedef void (*process_fn)(void *);
 process_t csp_spawn(process_fn fn, void *context);
 process_t csp_self();

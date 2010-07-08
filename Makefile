@@ -23,6 +23,16 @@ UNITS=\
 
 LINK_INCLUDES:=$(shell scripts/mk_links $(UNITS))
 
+# csp
+CSP_DIR=src/csp/src
+CSP_TEST=src/csp/tests
+LIB_OBJECTS+=\
+	$(CSP_DIR)/process.o
+
+$(CSP_TEST)/process_t: $(CSP_TEST)/process_t.c lib/libreplicator.a
+	@echo '    [CC] '$@
+	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< -Llib -lreplicator
+
 # datastruct
 DS_DIR=src/datastruct/src
 LIB_OBJECTS+=\
