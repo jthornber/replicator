@@ -10,9 +10,6 @@
 #include <ucontext.h>
 #include <unistd.h>
 
-// FIXME: remove
-#include <stdio.h>
-
 /*----------------------------------------------------------------*/
 
 struct process {
@@ -30,14 +27,27 @@ enum {
 };
 
 static ucontext_t scheduler_;
+static ucontext_t spawn_;
 static void (*launch_fn_)(void *);
 static void *launch_arg_ = NULL;
+static ucontext_t *launch_cpu_state_;
 
 static LIST_INIT(schedulable_);
 
 void init_process()
 {
-        launch_fn_(launch_arg_);
+        /*
+         * See the comment in csp_spawn for more info on what's happening
+         * here.
+         */
+        void (*fn)(void *) = launch_fn_;
+        void *arg = launch_arg_;
+
+        /* now we've got the args we can switch back to the spawn function */
+        swapcontext(launch_cpu_state_, &spawn_);
+
+        /* we get here when this process is scheduled properly */
+        fn(arg);
 }
 
 process_t csp_spawn(process_fn fn, void *context)
@@ -66,11 +76,15 @@ process_t csp_spawn(process_fn fn, void *context)
         /*
          * makecontext can only be passed integer arguments, sadly we want
          * to pass in a void * to our function.  So we pass info through
-         * some static vars.
+         * some static vars, we then need to run the new context for long
+         * enough to pick up these new vars.
          */
         launch_fn_ = fn;
         launch_arg_ = context;
         makecontext(&pid->cpu_state, init_process, 0);
+        launch_cpu_state_ = &pid->cpu_state;
+        swapcontext(&spawn_, &pid->cpu_state);
+
         pid->timeslice_remaining = TIMESLICE;
         list_add(&schedulable_, &pid->list);
 
