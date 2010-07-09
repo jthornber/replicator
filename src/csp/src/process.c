@@ -13,6 +13,10 @@
 #include <ucontext.h>
 #include <unistd.h>
 
+#if DEBUG
+#include <stdio.h>
+#endif
+
 /*----------------------------------------------------------------*/
 
 struct process {
@@ -24,7 +28,8 @@ struct process {
         /* io manager fields */
         struct epoll_event ev;
 
-        unsigned timeslice_remaining;
+        /* sleep */
+        float delta;
 };
 
 enum {
@@ -92,8 +97,6 @@ process_t csp_spawn(process_fn fn, void *context)
         makecontext(&pid->cpu_state, init_process, 0);
         launch_cpu_state_ = &pid->cpu_state;
         swapcontext(&spawn_, &pid->cpu_state);
-
-        pid->timeslice_remaining = TIMESLICE;
         list_add(&schedulable_, &pid->list);
 
         return pid;
@@ -126,20 +129,16 @@ void csp_kill(process_t pid)
 
 void csp_yield()
 {
-        swapcontext(&get_current()->cpu_state, &scheduler_);
-}
+        process_t p = csp_self();
 
-void csp_sleep(unsigned milli)
-{
-        csp_yield();
-
-        /* FIXME: finish */
+        /* move current process to the back of the runnable list */
+        list_move(&schedulable_, &p->list);
+        swapcontext(&p->cpu_state, &scheduler_);
 }
 
 /*----------------------------------------------------------------*/
 
 /* io manager */
-static LIST_INIT(ios_);
 static int epoll_fd;
 
 enum io_type {
@@ -165,7 +164,7 @@ static int io_wait(process_t p, int fd, enum io_type direction)
         p->ev.data.fd = fd;
         if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &p->ev) == -1)
                 return 0;
-        list_move(&ios_, &p->list);
+        list_del(&p->list);
         csp_yield();
         return 1;
 }
@@ -178,6 +177,8 @@ static void io_check(unsigned milli)
 {
         int i;
         struct epoll_event events[MAX_EVENTS];
+
+        // fprintf(stderr, "io_check(%u)\n", milli);
         int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, milli);
         if (nfds == -1)
                 // FIXME: log
@@ -225,6 +226,108 @@ void csp_set_non_blocking(int fd)
         fcntl(fd, F_SETFL, O_NONBLOCK);
 }
 
+/*----------------------------------------------------------------*/
+
+/* sleep manager */
+static LIST_INIT(sleepers_);
+
+static float ts_to_float(struct timespec *ts)
+{
+        return ((float) ts->tv_sec) + ((float) ts->tv_nsec) / 1000000000.0;
+}
+
+static float real_elapsed()
+{
+        static int started = 0;
+        static float last;
+        static unsigned long init_sec;
+
+        struct timespec t;
+
+        if (clock_gettime(CLOCK_REALTIME, &t) < 0) {
+                // FIXME: log
+                return 1.0;
+        }
+
+        if (!started) {
+                init_sec = t.tv_sec;
+                t.tv_sec = 0;
+                last = ts_to_float(&t);
+                started = 1;
+                return 0.0;
+        } else {
+                t.tv_sec -= init_sec;
+                float now = ts_to_float(&t);
+                float delta = now - last;
+                last = now;
+                return delta;
+        }
+}
+
+#if DEBUG
+static void print_sleepers()
+{
+        struct process *cp;
+        int i = 0;
+        list_iterate_items(cp, &sleepers_)
+                fprintf(stderr, "sleeper[%d]: %f\n", i++, cp->delta);
+}
+#endif
+
+/*
+ * Returns the number of seconds that can elapse before you should call
+ * this function again.
+ */
+static float sleep_check()
+{
+        float elapsed = real_elapsed(), r = 1.0;
+        struct list *l = sleepers_.n;
+
+        while (l != &sleepers_) {
+                struct process *p = list_item(l, struct process);
+
+                struct list *n = l->n;
+                if (elapsed >= p->delta) {
+                        elapsed -= p->delta;
+                        list_move(&schedulable_, &p->list);
+                } else {
+                        p->delta -= elapsed;
+                        r = p->delta;
+                        break;
+                }
+                l = n;
+        }
+
+        return r;
+}
+
+static void sleep_add(process_t p, float delay)
+{
+        /* we call sleep_check first to ensure deltas are up to date */
+        sleep_check();
+
+        struct list *l = sleepers_.n;
+        while (l != &sleepers_) {
+                struct process *cp = list_item(l, struct process);
+                if (delay > cp->delta)
+                        delay -= cp->delta;
+                else {
+                        cp->delta -= delay;
+                        break;
+                }
+                l = cp->list.n;
+        }
+
+        p->delta = delay;
+        list_move(l, &p->list);
+}
+
+void csp_sleep(unsigned milli)
+{
+        process_t p = csp_self();
+        sleep_add(p, ((float) milli) / 1000.0);
+        swapcontext(&p->cpu_state, &scheduler_);
+}
 
 /*----------------------------------------------------------------*/
 
@@ -243,14 +346,10 @@ static void reap()
 
 static void schedule()
 {
-        /* look at the time slice for the current process */
-        process_t current = get_current();
-
-        /* move current process to the back of the runnable list */
-        list_move(&schedulable_, &current->list);
-        io_check(0);
-        get_current()->timeslice_remaining = TIMESLICE;
-        swapcontext(&scheduler_, &get_current()->cpu_state);
+        float sleep_delta = sleep_check();
+        io_check(list_empty(&schedulable_) ? sleep_delta * 1000.0 : 0);
+        if (!list_empty(&schedulable_))
+                swapcontext(&scheduler_, &get_current()->cpu_state);
 }
 
 int csp_start()
@@ -261,7 +360,8 @@ int csp_start()
 
         for (;;) {
                 reap();
-                if (list_empty(&schedulable_)) /* FIXME: conjunction with other lists */
+                if (list_empty(&schedulable_) &&
+                    list_empty(&sleepers_))
                         break;
                 else
                         schedule();
