@@ -140,6 +140,7 @@ void csp_yield()
 
 /* io manager */
 static int epoll_fd;
+static int io_count = 0;
 
 enum io_type {
         READ,
@@ -165,7 +166,9 @@ static int io_wait(process_t p, int fd, enum io_type direction)
         if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &p->ev) == -1)
                 return 0;
         list_del(&p->list);
+        io_count++;
         csp_yield();
+        io_count--;
         return 1;
 }
 
@@ -178,7 +181,10 @@ static void io_check(unsigned milli)
         int i;
         struct epoll_event events[MAX_EVENTS];
 
-        // fprintf(stderr, "io_check(%u)\n", milli);
+        /* try and avoid an unnecessary system call */
+        if (!milli && !io_count)
+                return;
+
         int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, milli);
         if (nfds == -1)
                 // FIXME: log
