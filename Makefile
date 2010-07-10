@@ -46,6 +46,8 @@ XDR_DIR=src/xdr/src
 LIB_OBJECTS+=\
 	$(XDR_DIR)/xdr.o
 
+include src/xdr/test/Makefile
+
 # replicator
 REP_DIR=src/replicator/src
 REP_OBJECTS=\
