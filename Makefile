@@ -23,27 +23,8 @@ UNITS=\
 
 LINK_INCLUDES:=$(shell scripts/mk_links $(UNITS))
 
-# csp
-CSP_DIR=src/csp/src
-CSP_TEST=src/csp/tests
-LIB_OBJECTS+=\
-	$(CSP_DIR)/process.o
-
-$(CSP_TEST)/process_t: $(CSP_TEST)/process_t.c lib/libreplicator.a
-	@echo '    [CC] '$@
-	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< -Llib -lreplicator -lrt
-
-$(CSP_TEST)/process1_t: $(CSP_TEST)/process1_t.c lib/libreplicator.a
-	@echo '    [CC] '$@
-	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< -Llib -lreplicator -lrt
-
-$(CSP_TEST)/io1_t: $(CSP_TEST)/io1_t.c lib/libreplicator.a
-	@echo '    [CC] '$@
-	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< -Llib -lreplicator -lrt
-
-$(CSP_TEST)/sleep_t: $(CSP_TEST)/sleep_t.c lib/libreplicator.a
-	@echo '    [CC] '$@
-	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< -Llib -lreplicator -lrt
+include src/csp/src/Makefile
+include src/csp/tests/Makefile
 
 # datastruct
 DS_DIR=src/datastruct/src
