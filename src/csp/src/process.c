@@ -12,6 +12,8 @@
 #include <time.h>
 #include <ucontext.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 
 #if DEBUG
 #include <stdio.h>
@@ -167,7 +169,7 @@ static int io_wait(process_t p, int fd, enum io_type direction)
                 return 0;
         list_del(&p->list);
         io_count++;
-        csp_yield();
+        swapcontext(&p->cpu_state, &scheduler_);
         io_count--;
         return 1;
 }
@@ -230,6 +232,19 @@ ssize_t csp_write(int fd, const void *buf, size_t count)
 void csp_set_non_blocking(int fd)
 {
         fcntl(fd, F_SETFL, O_NONBLOCK);
+}
+
+int csp_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+{
+        for (;;) {
+                int fd = accept(sockfd, addr, addrlen);
+                if (fd < 0 && errno == EAGAIN)
+                        io_wait(csp_self(), sockfd, READ);
+                else {
+                        csp_yield();
+                        return fd;
+                }
+        }
 }
 
 /*----------------------------------------------------------------*/
