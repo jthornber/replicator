@@ -55,10 +55,14 @@ var_t deref(var_t v)
 
 var_t ref(var_t v)
 {
-        var_t r = new_var();
-        r->t = VT_REF;
-        r->v = v;
-        return r;
+        if (v->t == VT_DEREF)
+                return v->v;
+        else {
+                var_t r = new_var();
+                r->t = VT_REF;
+                r->v = v;
+                return r;
+        }
 }
 
 var_t subscript(var_t v, const char *str)
@@ -72,32 +76,38 @@ var_t subscript(var_t v, const char *str)
 
 void emit_var(var_t v)
 {
-        emit("(");
         switch (v->t) {
         case VT_TOP:
                 emit("%s", v->str);
                 break;
 
         case VT_FIELD:
+                emit("(");
                 emit_var(v->v);
                 emit(".%s", v->str);
+                emit(")");
                 break;
 
         case VT_DEREF:
+                emit("(");
                 emit("*");
                 emit_var(v->v);
+                emit(")");
                 break;
 
         case VT_REF:
+                emit("(");
                 emit("&");
                 emit_var(v->v);
+                emit(")");
                 break;
 
         case VT_SUBSCRIPT:
+                emit("(");
                 emit_var(v->v);
                 emit("[%s]", v->str);
+                emit(")");
                 break;
         }
-        emit(")");
 }
 

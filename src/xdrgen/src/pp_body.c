@@ -289,6 +289,14 @@ static void unpack_decl(struct decl *d, var_t v);
 
 static void unpack(const char *fn, var_t v)
 {
+        emit("if (!xdr_unpack_%s(c, mem, ", fn);
+        emit_var(ref(v));
+        emit("))"); nl();
+        push(); emit("return 0;"); nl(); pop();
+}
+
+static void unpack_basic(const char *fn, var_t v)
+{
         emit("if (!xdr_unpack_%s(c, ", fn);
         emit_var(ref(v));
         emit("))"); nl();
@@ -319,7 +327,7 @@ static void unpack_decl_internal(struct decl_internal *di, var_t v)
 
                 {
                         var_t v2 = field(v, "len");
-                        unpack("uint", v2);
+                        unpack_basic("uint", v2);
                         emit("for (i = 0; i < ");
                         emit_var(v2);
                 }
@@ -345,7 +353,7 @@ static void unpack_decl_internal(struct decl_internal *di, var_t v)
                 emit("{");
                 push(); nl();
 
-                unpack("uint", field(v, "len"));
+                unpack_basic("uint", field(v, "len"));
 
                 emit("if (!xdr_cursor_read(c, (void *) ");
                 emit_var(field(v, "data"));
@@ -364,7 +372,7 @@ static void unpack_decl_internal(struct decl_internal *di, var_t v)
         case DECL_STRING:
                 emit("{"); push(); nl();
                 emit("uint32_t len;"); nl();
-                unpack("uint", top("len"));
+                unpack_basic("uint", top("len"));
                 emit("if (!(");
                 emit_var(v);
                 emit(" = pool_alloc(mem, len + 1)))"); push(); nl();
@@ -385,7 +393,7 @@ static void unpack_decl_internal(struct decl_internal *di, var_t v)
         case DECL_POINTER: {
                 var_t flag = top("has_value");
                 emit("uint32_t has_value;"); nl();
-                unpack("uint", flag);
+                unpack_basic("uint", flag);
 
                 emit("if ("); emit_var(flag); emit(") {"); push(); nl();
                 unpack_type(di->u.pointer.t, v);
@@ -399,15 +407,7 @@ static void unpack_decl_internal(struct decl_internal *di, var_t v)
 
 static void unpack_typedef_internal(struct typedef_internal *ti)
 {
-        var_t v = top("output");
-
-        emit("if (!("); emit_var(deref(v));
-        emit(" = pool_alloc(mem, sizeof(");
-        emit_var(deref(deref(v)));
-        emit("))))"); push(); nl();
-        emit("return 0;"); pop(); nl();
-
-        v = deref(deref(v));
+        var_t v = deref(top("output"));
 
         switch (ti->type) {
         case DEF_SIMPLE:
@@ -432,31 +432,31 @@ static void unpack_type(struct type *t, var_t v)
 {
         switch (t->type) {
         case TINT:
-                unpack("int", v);
+                unpack_basic("int", v);
                 break;
 
         case TUINT:
-                unpack("uint", v);
+                unpack_basic("uint", v);
                 break;
 
         case THYPER:
-                unpack("hyper", v);
+                unpack_basic("hyper", v);
                 break;
 
         case TUHYPER:
-                unpack("uhyper", v);
+                unpack_basic("uhyper", v);
                 break;
 
         case TFLOAT:
-                unpack("float", v);
+                unpack_basic("float", v);
                 break;
 
         case TDOUBLE:
-                unpack("double", v);
+                unpack_basic("double", v);
                 break;
 
         case TBOOL:
-                unpack("bool", v);
+                unpack_basic("bool", v);
                 break;
 
         case TENUM:
@@ -472,7 +472,7 @@ static void unpack_type(struct type *t, var_t v)
                 break;
 
         case TTYPEDEF:
-                unpack(t->u.ttypedef.t, ref(v));
+                unpack(t->u.ttypedef.t, v);
                 break;
         }
 }
@@ -565,7 +565,7 @@ static void decl_(struct typedef_ *td)
         }
         pop(); nl(); emit("}"); nl(); nl();
 
-        emit("int xdr_unpack_%s(struct xdr_cursor *c, struct pool *mem, %s **output)",
+        emit("int xdr_unpack_%s(struct xdr_cursor *c, struct pool *mem, %s *output)",
              td->identifier, td->identifier);
         nl();
         emit("{"); push(); nl();
@@ -574,6 +574,23 @@ static void decl_(struct typedef_ *td)
                 emit("return 1;");
         }
         pop(); nl(); emit("}"); nl();
+
+        emit("int xdr_unpack_%s_alloc(struct xdr_cursor *c, struct pool *mem, %s **output)",
+             td->identifier, td->identifier);
+        nl();
+        emit("{"); push(); nl();
+        {
+                emit("*output = pool_alloc(mem, sizeof(**output));"); nl();
+                emit("if (!*output)"); push(); nl();
+                emit("return 0;"); pop(); nl(); nl();
+
+                emit("if (!xdr_unpack_%s(c, mem, *output))",
+                     td->identifier, td->identifier); push(); nl();
+                emit("return 0;"); pop(); nl(); nl();
+                emit("return 1;");
+        }
+        pop(); nl(); emit("}"); nl();
+
 }
 
 static void decls_(struct specification *spec)

@@ -258,7 +258,10 @@ static void decl_(struct typedef_ *td)
         emit("int xdr_pack_%s(struct xdr_buffer *buf, %s *input);",
              td->identifier, td->identifier);
         nl();
-        emit("int xdr_unpack_%s(struct xdr_cursor *c, struct pool *mem, %s **output);",
+        emit("int xdr_unpack_%s(struct xdr_cursor *c, struct pool *mem, %s *output);",
+             td->identifier, td->identifier);
+        nl();
+        emit("int xdr_unpack_%s_alloc(struct xdr_cursor *c, struct pool *mem, %s **output);",
              td->identifier, td->identifier);
         nl();
 }
