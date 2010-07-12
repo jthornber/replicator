@@ -62,7 +62,7 @@ $(REP_DIR)/main.o: $(REP_DIR)/protocol.h
 
 bin/replicator: $(REP_OBJECTS)
 	@echo '    [LN] '$@
-	$(Q)$(CC) $+ -o $@ -Llib -lreplicator
+	$(Q)$(CC) $+ -o $@ -Llib -lreplicator -lrt
 
 # utility
 UTIL_DIR=src/utility/src
