@@ -33,6 +33,8 @@ int xdr_buffer_add_block(struct xdr_buffer *buf, void *data, size_t len);
  * atomic semantics, it either succeeds and all the data is written, or it
  * fails and _no_ data is written.
  */
+
+/* FIXME: doesn't yet have atomic semantics ! */
 int xdr_buffer_write(struct xdr_buffer *buf, void *data, uint32_t len);
 
 size_t xdr_buffer_size(struct xdr_buffer *buf);
