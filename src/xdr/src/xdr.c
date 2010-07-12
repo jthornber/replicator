@@ -62,10 +62,6 @@ size_t chunk_space_(struct chunk *c)
 
 /*
  * Slow path.
- *
- * FIXME: We really should write some data to the end of the current chunk,
- * and then the rest to the new chunk.  This has to be done carefully to
- * preserve atomicity.  Maybe later.
  */
 static int write_new_chunk_(struct xdr_buffer *buf, void *data, size_t len)
 {
@@ -87,35 +83,42 @@ static int write_new_chunk_(struct xdr_buffer *buf, void *data, size_t len)
         return 1;
 }
 
-/*
- * Fast path.
- */
+static inline uint32_t min(uint32_t lhs, uint32_t rhs)
+{
+        return lhs <= rhs ? lhs : rhs;
+}
+
 static inline int write_(struct xdr_buffer *buf, void *data, size_t len)
 {
         struct chunk *c;
         struct list *last = list_last(&buf->chunks);
 
-        if (!last)
-                return write_new_chunk_(buf, data, len);
+        if (last) {
+                c = list_item(last, struct chunk);
 
-        c = list_item(last, struct chunk);
-        if (chunk_space_(c) < len)
-                return write_new_chunk_(buf, data, len);
+                uint32_t l = min(chunk_space_(c), len);
+                memcpy(c->alloc_end, data, l);
+                c->alloc_end += l;
+                len -= l;
+        }
 
-        memcpy(c->alloc_end, data, len);
-        c->alloc_end += len;
+        return len ? write_new_chunk_(buf, data, len) : 1;
+}
 
-        return 1;
+static inline uint32_t calc_padding(uint32_t len)
+{
+        uint32_t remains = len % 4;
+        return remains ? 4 - remains : 0;
 }
 
 int xdr_buffer_write(struct xdr_buffer *buf, void *data, uint32_t len)
 {
         int r = write_(buf, data, len);
-        unsigned remains = len % 4;
+        uint32_t padding = calc_padding(len);
 
-        if (r && remains) {
+        if (r && padding) {
                 static uint32_t zeroes = 0;
-                r  = write_(buf, &zeroes, 4 - remains);
+                r  = write_(buf, &zeroes, padding);
         }
 
         return r;
@@ -158,46 +161,66 @@ void xdr_cursor_destroy(struct xdr_cursor *c)
         free(c);
 }
 
-static inline
-int cursor_read_(struct xdr_cursor *c, void *data, size_t offset)
+static void cursor_next_chunk_(struct xdr_cursor *c)
 {
-        struct xdr_cursor copy = *c;
-
-        while (offset && copy.c) {
-                size_t cs = copy.c->end - copy.where;
-
-                if (cs >= offset) {
-                        if (data)
-                                memcpy(data, copy.where, offset);
-                        copy.where += offset;
-                        offset = 0;
-                } else {
-                        struct list *n = list_next(&c->buf->chunks, &copy.c->list);
-                        if (!n)
-                                return 0;
-
-                        copy.c = list_item(n, struct chunk);
-                        copy.where = copy.c->start;
-                        if (data) {
-                                memcpy(data, copy.where, offset);
-                                data += cs;
-                        }
-                        offset -= cs;
-                }
-        }
-
-        *c = copy;
-        return 1;
+        struct list *n = list_next(&c->buf->chunks, &c->c->list);
+        if (n) {
+                c->c = list_item(n, struct chunk);
+                c->where = c->c->start;
+        } else
+                c->c = NULL;
 }
 
-int xdr_cursor_forward(struct xdr_cursor *c, size_t offset)
+static
+int cursor_read_(struct xdr_cursor *c, void *data, uint32_t len)
 {
-        return cursor_read_(c, NULL, offset);
+        /* the cursor has run off the end */
+        if (!c->c)
+                return 0;
+
+        while (len) {
+                uint32_t l = min(len, c->c->end - c->where);
+                if (data)
+                        memcpy(data, c->where, l);
+                data += l;
+                len -= l;
+                c->where += l;
+                if (c->where == c->c->end)
+                        cursor_next_chunk_(c);
+        }
+
+        return !len;
+}
+
+int xdr_cursor_forward(struct xdr_cursor *c, uint32_t offset)
+{
+        int r;
+        uint32_t padding = calc_padding(offset);
+        struct xdr_cursor copy = *c;
+
+        r = cursor_read_(&copy, NULL, offset);
+        if (r && padding)
+                r = cursor_read_(&copy, NULL, padding);
+
+        if (r)
+                *c = copy;
+
+        return r;
 }
 
 int xdr_cursor_read(struct xdr_cursor *c, void *data, uint32_t len)
 {
-        return cursor_read_(c, data, len);
+        int r;
+        uint32_t padding = calc_padding(len);
+        struct xdr_cursor copy = *c;
+
+        r = cursor_read_(&copy, data, len);
+        if (r && padding)
+                r = cursor_read_(&copy, NULL, padding);
+
+        if (r)
+                *c = copy;
+        return r;
 }
 
 /*--------------------------------*/

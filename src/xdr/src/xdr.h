@@ -43,7 +43,7 @@ struct xdr_cursor;
 
 struct xdr_cursor *xdr_cursor_create(struct xdr_buffer *buf);
 void xdr_cursor_destroy(struct xdr_cursor *c);
-int xdr_cursor_forward(struct xdr_cursor *c, size_t offset);
+int xdr_cursor_forward(struct xdr_cursor *c, uint32_t offset);
 int xdr_cursor_read(struct xdr_cursor *c, void *data, uint32_t len);
 
 /*
