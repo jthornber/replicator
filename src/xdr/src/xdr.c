@@ -99,7 +99,7 @@ static inline int write_(struct xdr_buffer *buf, void *data, size_t len)
                 return write_new_chunk_(buf, data, len);
 
         c = list_item(last, struct chunk);
-        if (chunk_space_(c) > len)
+        if (chunk_space_(c) < len)
                 return write_new_chunk_(buf, data, len);
 
         memcpy(c->alloc_end, data, len);
@@ -108,16 +108,17 @@ static inline int write_(struct xdr_buffer *buf, void *data, size_t len)
         return 1;
 }
 
-int xdr_buffer_write(struct xdr_buffer *buf, void *data, size_t len)
+int xdr_buffer_write(struct xdr_buffer *buf, void *data, uint32_t len)
 {
+        int r = write_(buf, data, len);
         unsigned remains = len % 4;
-        if (remains) {
-                static uint32_t zeroes = 0;
-                write_(buf, &zeroes, 4 - remains);
-                return 0;
 
-        } else
-                return write_(buf, data, len);
+        if (r && remains) {
+                static uint32_t zeroes = 0;
+                r  = write_(buf, &zeroes, 4 - remains);
+        }
+
+        return r;
 }
 
 size_t xdr_buffer_size(struct xdr_buffer *buf)
@@ -194,7 +195,7 @@ int xdr_cursor_forward(struct xdr_cursor *c, size_t offset)
         return cursor_read_(c, NULL, offset);
 }
 
-int xdr_cursor_read(struct xdr_cursor *c, void *data, size_t len)
+int xdr_cursor_read(struct xdr_cursor *c, void *data, uint32_t len)
 {
         return cursor_read_(c, data, len);
 }
