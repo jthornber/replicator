@@ -78,7 +78,7 @@ lib/libreplicator.a: $(LIB_OBJECTS)
 	$(Q)$(AR) -sr $@ $+
 
 .PHONEY: test-programs
-test-programs:
+test-programs: $(TEST_PROGRAMS)
 
 Q=@
 

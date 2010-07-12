@@ -37,7 +37,7 @@ int main(int argc, char **argv)
         printf(" done\n");
 
         printf("%d context switches occurred\n", TARGET);
-
+        assert(counter == TARGET);
         csp_exit();
 
         return 0;

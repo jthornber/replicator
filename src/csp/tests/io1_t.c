@@ -17,7 +17,7 @@ void reader(void *_)
 {
         char c;
         while (csp_read(fds[0], &c, 1) > 0) {
-                // printf("r");
+                printf("r");
                 assert(c == 'j');
         }
 }
@@ -27,7 +27,7 @@ void writer(void *_)
         int i;
         char c = 'j';
         for (i = 0; i < TARGET; i++) {
-                // printf("w");
+                printf("w");
                 csp_write(fds[1], &c, 1);
         }
         close(fds[1]);
