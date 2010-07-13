@@ -16,6 +16,7 @@ struct format *lookup_format(const char *str)
                 { "ast", pretty_print },
                 { "header", print_header },
                 { "body", print_body },
+                { "ruby", print_ruby },
                 { NULL, NULL }
         };
 

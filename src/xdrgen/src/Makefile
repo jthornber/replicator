@@ -8,6 +8,7 @@ XDRGEN_OBJECTS=\
 	$(XDRGEN_DIR)/emit.o \
 	$(XDRGEN_DIR)/pp_header.o \
 	$(XDRGEN_DIR)/pp_body.o \
+	$(XDRGEN_DIR)/pp_ruby.o \
 	$(XDRGEN_DIR)/main.o \
 	$(XDRGEN_DIR)/var.o
 

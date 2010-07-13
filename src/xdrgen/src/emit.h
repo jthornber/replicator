@@ -14,6 +14,8 @@ void pop();
 void emit(const char *fmt, ...);
 void nl();
 
+void emit_caps(const char *str);
+
 /*----------------------------------------------------------------*/
 
 #endif

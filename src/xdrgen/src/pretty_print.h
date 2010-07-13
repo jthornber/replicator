@@ -8,6 +8,7 @@
 void pretty_print(struct specification *spec);
 void print_header(struct specification *spec);
 void print_body(struct specification *spec);
+void print_ruby(struct specification *spec);
 
 /*----------------------------------------------------------------*/
 

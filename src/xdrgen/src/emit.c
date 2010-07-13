@@ -1,5 +1,7 @@
 #include "emit.h"
 
+#include <assert.h>
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 
@@ -12,14 +14,15 @@ void set_output_file(FILE *f)
         output_ = f;
 }
 
-static unsigned indent_ = 0;
+/* using an int so we can detect under runs */
+static int indent_ = 0;
 
 enum {
         INDENT = 4
 };
 
 void push() { indent_ += INDENT; }
-void pop() {indent_ -= INDENT; }
+void pop() {indent_ -= INDENT; assert(indent_ >= 0); }
 
 static int newline_ = 1;
 
@@ -42,6 +45,14 @@ void nl()
 {
         fprintf(output_, "\n");
         newline_ = 1;
+}
+
+void emit_caps(const char *str)
+{
+        while (*str) {
+                emit("%c", toupper(*str));
+                str++;
+        }
 }
 
 /*----------------------------------------------------------------*/
