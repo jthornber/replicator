@@ -98,6 +98,7 @@ Q=@
 	$(Q)$(XDRGEN) --format body -o $@ $<
 
 RUBY=ruby1.9 -Ireport-generators/lib -Ireport-generators/test
+RUBY-FT=ruby1.9 -Ireport-generators/lib -Ifunctional-tests/lib -Ifunctional-tests/tests
 
 .PHONEY: unit-test ruby-test test-programs
 
@@ -111,3 +112,4 @@ memcheck: test-programs
 
 ruby-test:
 	$(RUBY) report-generators/test/ts.rb
+	$(RUBY-FT) functional-tests/tests/ts.rb
