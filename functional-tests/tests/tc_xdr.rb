@@ -6,7 +6,9 @@ class TestXdr < Test::Unit::TestCase
 
   def good_test_cases(cases, packer, unpacker)
     cases.each do |c|
-      self.send(unpacker, self.send(packer, c))
+      c2, txt = self.send(unpacker, self.send(packer, c))
+      assert_equal(c, c2)
+      assert_equal('', txt)
     end
   end
 
@@ -57,5 +59,13 @@ class TestXdr < Test::Unit::TestCase
   def test_enum
     good_test_cases([:one, :two, :three], :pack_test_enum, :unpack_test_enum)
     bad_test_cases([:foo, :blip, :onetwo, 'three'], :pack_test_enum, :unpack_test_enum)
+  end
+
+  def test_array
+    a = [1, 32, 63, 99, 1000]
+    txt = pack_array(a) {|v| pack_uint(v)}
+    a2, txt = unpack_array(a.length, txt) {|txt| unpack_uint(txt)}
+    assert_equal(a, a2)
+    assert_equal('', txt)
   end
 end

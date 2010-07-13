@@ -119,4 +119,18 @@ module XDR
       raise "invalid enum value (#{v})"
     end
   end
+
+  def pack_array(array)
+    (0..array.length - 1).map do |i|
+      yield(array[i])
+    end.join
+  end
+
+  def unpack_array(n, txt)
+    v = Array.new
+    (0..n - 1).each do |i|
+      v[i], txt = yield(txt)
+    end
+    [v, txt]
+  end
 end
