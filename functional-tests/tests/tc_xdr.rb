@@ -40,8 +40,8 @@ class TestXdr < Test::Unit::TestCase
   end
 
   def test_hyper
-    good_test_cases([0, 1, -1, -9223372036854775808, 9223372036854775807], :pack_hyper, :unpack_uhyper)
-    bad_test_cases([-9223372036854775809, 9223372036854775808], :pack_hyper, :unpack_uhyper)
+    good_test_cases([0, 1, -1, -9223372036854775808, 9223372036854775807], :pack_hyper, :unpack_hyper)
+    bad_test_cases([-9223372036854775809, 9223372036854775808], :pack_hyper, :unpack_hyper)
   end
 
   def test_string

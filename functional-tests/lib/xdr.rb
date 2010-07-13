@@ -56,7 +56,7 @@ module XDR
 
   def unpack_uhyper(txt)
     h, l = txt.unpack('NN')
-    [h << 32 & l, drop(8, txt)]
+    [(h << 32) | l, drop(8, txt)]
   end
 
   def pack_hyper(n)
@@ -64,7 +64,8 @@ module XDR
   end
 
   def unpack_hyper(txt)
-    [ unpack_uhyper(txt) - 9223372036854775808, drop(8, txt)]
+    v, txt = unpack_uhyper(txt)
+    [v - 9223372036854775808, txt]
   end
 
   def pack_float(f)
