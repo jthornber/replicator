@@ -121,7 +121,10 @@ module XDR
     end
   end
 
-  def pack_array(array)
+  def pack_array(n, array)
+    if array.length != n
+      raise "incorrect array size, was #{array.length}, expected #{n}"
+    end
     (0..array.length - 1).map do |i|
       yield(array[i])
     end.join

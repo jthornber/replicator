@@ -63,9 +63,13 @@ class TestXdr < Test::Unit::TestCase
 
   def test_array
     a = [1, 32, 63, 99, 1000]
-    txt = pack_array(a) {|v| pack_uint(v)}
+    txt = pack_array(5, a) {|v| pack_uint(v)}
     a2, txt = unpack_array(a.length, txt) {|txt| unpack_uint(txt)}
     assert_equal(a, a2)
     assert_equal('', txt)
+
+    assert_raises(RuntimeError) do
+      pack_array(6, a) {|v| pack_uint(v)}
+    end
   end
 end
