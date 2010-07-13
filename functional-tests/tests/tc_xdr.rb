@@ -45,4 +45,17 @@ class TestXdr < Test::Unit::TestCase
   def test_string
     good_test_cases(["", "foo\0bar", "the quick brown ..."], :pack_string, :unpack_string)
   end
+
+  def pack_test_enum(v)
+    pack_enum({:one => 1, :two => 2, :three => 45}, v)
+  end
+
+  def unpack_test_enum(txt)
+    unpack_enum({1 => :one, 2 => :two, 45 => :three}, txt)
+  end
+
+  def test_enum
+    good_test_cases([:one, :two, :three], :pack_test_enum, :unpack_test_enum)
+    bad_test_cases([:foo, :blip, :onetwo, 'three'], :pack_test_enum, :unpack_test_enum)
+  end
 end

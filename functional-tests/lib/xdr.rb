@@ -102,4 +102,21 @@ module XDR
     len, txt = unpack_uint(txt)
     unpack_raw(len, txt)
   end
+
+  def pack_enum(enum_hash, v)
+    if enum_hash.member?(v)
+      pack_uint(enum_hash[v])
+    else
+      raise "invalid enum value (#{v})"
+    end
+  end
+
+  def unpack_enum(enum_hash, txt)
+    v, txt = unpack_uint(txt)
+    if enum_hash.member?(v)
+      [enum_hash[v], txt]
+    else
+      raise "invalid enum value (#{v})"
+    end
+  end
 end
