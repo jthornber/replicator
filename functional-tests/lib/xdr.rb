@@ -1,3 +1,5 @@
+require 'message'
+
 module XDR
   def bounds_check(n, low, high)
     raise "out of bounds" if n < low || n > high
@@ -148,6 +150,20 @@ module XDR
       end
 
       [results, txt]
+    end
+  end
+
+  FieldDetail = Struct.new(:unpacker, :name)
+
+  def unpack_struct(*fields)
+    lambda do |txt|
+      v = Message.new
+
+      fields.each do |f|
+        v[name], txt = f.unpacker.call(txt)
+      end
+
+      v
     end
   end
 end
