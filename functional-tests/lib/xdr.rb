@@ -152,6 +152,53 @@ module XDR
       [results, txt]
     end
   end
+  
+  def unpack_array(n, u)
+    unpack_many(Array.new(n, u))
+  end
+
+  def unpack_var_array(u)
+    lambda do |txt|
+      n, txt = unpack_uint(txt)
+      fn = unpack_array(n, u)
+      fn.call(txt)
+    end
+  end
+
+  def unpack_opaque(n)
+    lambda do |txt|
+      split_at(n, txt)
+    end
+  end
+
+  def unpack_var_opaque
+    lambda do |txt|
+      n, txt = unpack_uint(txt)
+      fn = unpack_opaque(n)
+      fn.call(txt)
+    end
+  end
+
+  def unpack_pointer(u)
+    lambda do |txt|
+      b, txt = unpack_bool(txt)
+      b ? u.call(txt) : [nil, txt]
+    end
+  end
+
+  EnumDetail = Struct.new(:const, :symbol)
+
+  def unpack_enum(*details)
+    lambda do |txt|
+      n, txt = unpack_uint(txt)
+      details.each do |d|
+        if n == d.const
+          return d.symbol
+        end
+      end
+      raise "unexpected enum constant (#{n})"
+    end
+  end
 
   FieldDetail = Struct.new(:unpacker, :name)
 
@@ -160,10 +207,39 @@ module XDR
       v = Message.new
 
       fields.each do |f|
-        v[name], txt = f.unpacker.call(txt)
+        v[f.name], txt = f.unpacker.call(txt)
       end
 
-      v
+      [v, txt]
     end
+  end
+
+  CaseDetail = Struct.new(:const, :unpacker, :name)
+
+  def unpack_union(/* FieldDetail */ discriminator,
+                   /* CaseDetail* */ cases,
+                   /* FieldDetail */ default)
+    lambda do |txt|
+      v = Message.new
+      d = discriminator.unpacker.call(txt)
+      v.[discriminator.name] = d
+      cases.each do |c|
+        if d == c.const
+          v.[c.name], txt = c.unpacker.call(txt)
+          return [v, txt]
+        end
+      end
+
+      if default
+        v.[default.name], txt = default.unpacker.call(txt)
+        return [v, txt]
+      end
+
+      raise "invalid discriminator value"
+    end
+  end
+
+  def unpack_void
+    lambda {|txt| [nil, txt]}
   end
 end

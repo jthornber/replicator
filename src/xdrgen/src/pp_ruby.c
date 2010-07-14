@@ -6,14 +6,6 @@
 
 /*----------------------------------------------------------------*/
 
-static void pp_type(struct type *t, var_t v);
-static void pp_enum_detail(struct enum_detail *ed, var_t v);
-static void pp_struct_detail(struct struct_detail *sd, var_t v);
-static void pp_union_detail(struct union_detail *ud, var_t v);
-static void pp_decl(struct decl *d, var_t v);
-
-/*----------------------------------------------------------------*/
-
 static void pp_expr(struct const_expr *ce)
 {
         switch (ce->type) {
@@ -27,7 +19,18 @@ static void pp_expr(struct const_expr *ce)
         }
 }
 
-static void pp_const_def(struct const_def *cd)
+/*----------------------------------------------------------------*/
+
+/* Packing */
+static void pp_pack_type(struct type *t, var_t v);
+static void pp_pack_enum_detail(struct enum_detail *ed, var_t v);
+static void pp_pack_struct_detail(struct struct_detail *sd, var_t v);
+static void pp_pack_union_detail(struct union_detail *ud, var_t v);
+static void pp_pack_decl(struct decl *d, var_t v);
+
+/*----------------------------------------------------------------*/
+
+static void pp_pack_const_def(struct const_def *cd)
 {
         emit_caps(cd->identifier);
         if (cd->ce) {
@@ -36,11 +39,11 @@ static void pp_const_def(struct const_def *cd)
         }
 }
 
-static void pp_decl_internal(struct decl_internal *di, var_t v)
+static void pp_pack_decl_internal(struct decl_internal *di, var_t v)
 {
         switch (di->type) {
         case DECL_SIMPLE:
-                pp_type(di->u.simple.t, v);
+                pp_pack_type(di->u.simple.t, v);
                 break;
 
         case DECL_ARRAY:
@@ -49,7 +52,7 @@ static void pp_decl_internal(struct decl_internal *di, var_t v)
                 emit(", ");
                 emit_var(v);
                 emit(") {|v| ");
-                pp_type(di->u.array.t, top("v")); emit("}");
+                pp_pack_type(di->u.array.t, top("v")); emit("}");
                 break;
 
         case DECL_VAR_ARRAY:
@@ -57,7 +60,7 @@ static void pp_decl_internal(struct decl_internal *di, var_t v)
                 emit("pack_array("); emit_var(v); emit(".length, ");
                 emit_var(v);
                 emit(") {|v| ");
-                pp_type(di->u.array.t, top("v")); emit("}");
+                pp_pack_type(di->u.array.t, top("v")); emit("}");
                 pop();
                 break;
 
@@ -86,42 +89,42 @@ static void pp_decl_internal(struct decl_internal *di, var_t v)
                 emit("pack_uint(0)");
                 pop(); nl(); emit("else"); push(); nl();
                 emit("pack_uint(1);"); nl();
-                pp_type(di->u.pointer.t, v);
+                pp_pack_type(di->u.pointer.t, v);
                 pop(); nl();
                 emit("end");
                 break;
         }
 }
 
-static void pp_typedef_internal(struct typedef_internal *ti, var_t v)
+static void pp_pack_typedef_internal(struct typedef_internal *ti, var_t v)
 {
         switch (ti->type) {
         case DEF_SIMPLE:
-                pp_decl_internal(ti->u.tsimple.di, v); nl();
+                pp_pack_decl_internal(ti->u.tsimple.di, v); nl();
                 break;
 
         case DEF_ENUM:
-                pp_enum_detail(ti->u.tenum.ed, v);
+                pp_pack_enum_detail(ti->u.tenum.ed, v);
                 break;
 
         case DEF_STRUCT:
-                pp_struct_detail(ti->u.tstruct.sd, v);
+                pp_pack_struct_detail(ti->u.tstruct.sd, v);
                 break;
 
         case DEF_UNION:
-                pp_union_detail(ti->u.tunion.ud, v);
+                pp_pack_union_detail(ti->u.tunion.ud, v);
                 break;
         }
 }
 
-static void pp_typedef(struct typedef_ *td)
+static void pp_pack_typedef(struct typedef_ *td)
 {
         emit("def pack_%s(v)", td->identifier); push(); nl();
-        pp_typedef_internal(td->ti, top("v"));
+        pp_pack_typedef_internal(td->ti, top("v"));
         nl(); pop(); emit("end");
 }
 
-static void pp_type(struct type *t, var_t v)
+static void pp_pack_type(struct type *t, var_t v)
 {
         switch (t->type) {
         case TINT:
@@ -153,15 +156,15 @@ static void pp_type(struct type *t, var_t v)
                 break;
 
         case TENUM:
-                pp_enum_detail(t->u.tenum.ed, v);
+                pp_pack_enum_detail(t->u.tenum.ed, v);
                 break;
 
         case TSTRUCT:
-                pp_struct_detail(t->u.tstruct.sd, v);
+                pp_pack_struct_detail(t->u.tstruct.sd, v);
                 break;
 
         case TUNION:
-                pp_union_detail(t->u.tunion.ud, v);
+                pp_pack_union_detail(t->u.tunion.ud, v);
                 break;
 
         case TTYPEDEF:
@@ -170,9 +173,10 @@ static void pp_type(struct type *t, var_t v)
         }
 }
 
-static void pp_enum_detail(struct enum_detail *ed, var_t v)
+static void emit_enum_table(struct enum_detail *ed)
 {
         struct const_def *cd;
+
         emit("begin"); push(); nl();
         emit("last = 0"); nl();
         emit("table = Hash.new"); nl();
@@ -188,23 +192,31 @@ static void pp_enum_detail(struct enum_detail *ed, var_t v)
 
                 nl();
         }
+        emit("table"); nl();
+        pop(); emit("end"); nl();
+}
+
+static void pp_pack_enum_detail(struct enum_detail *ed, var_t v)
+{
+        emit("begin"); push(); nl();
+        emit("table = "); emit_enum_table(ed);
         emit("pack_enum(table, "); emit_var(v); emit(")"); nl();
         pop(); emit("end"); nl();
 }
 
-static void pp_struct_detail(struct struct_detail *sd, var_t v)
+static void pp_pack_struct_detail(struct struct_detail *sd, var_t v)
 {
         struct decl *d;
 
         emit("["); push(); nl();
         list_iterate_items(d, &sd->decls) {
-                pp_decl(d, v); emit(", "); nl();
+                pp_pack_decl(d, v); emit(", "); nl();
         }
         pop();
         emit("].join");
 }
 
-static void pp_decl(struct decl *d, var_t v)
+static void pp_pack_decl(struct decl *d, var_t v)
 {
         switch(d->type) {
         case DECL_VOID:
@@ -212,34 +224,285 @@ static void pp_decl(struct decl *d, var_t v)
                 break;
 
         case DECL_OTHER:
-                pp_decl_internal(d->u.tother.di, field(v, d->u.tother.identifier));
+                pp_pack_decl_internal(d->u.tother.di, field(v, d->u.tother.identifier));
                 break;
         }
 }
 
-static void pp_union_detail(struct union_detail *ud, var_t v)
+static void pp_pack_union_detail(struct union_detail *ud, var_t v)
 {
         struct case_entry *ce;
 
         emit("["); push(); nl();
         {
                 var_t discriminator = field(v, ud->discriminator->u.tother.identifier);
-                pp_decl(ud->discriminator, v); emit(","); nl();
+                pp_pack_decl(ud->discriminator, v); emit(","); nl();
                 emit("case "); emit_var(discriminator); nl();
                 list_iterate_items(ce, &ud->cases) {
                         emit("when "); pp_expr(ce->ce); push(); nl();
-                        pp_decl(ce->d, field(v, "u")); nl(); pop();
+                        pp_pack_decl(ce->d, field(v, "u")); nl(); pop();
                 }
 
                 if (ud->default_case) {
                         emit("else"); push(); nl();
-                        pp_decl(ud->default_case, field(v, "u"));
+                        pp_pack_decl(ud->default_case, field(v, "u"));
                         pop(); nl();
                 }
         }
         pop();
         emit("].join");
 }
+
+/*----------------------------------------------------------------*/
+
+/* Unpacking */
+static void pp_unpack_type(struct type *t);
+static void pp_unpack_enum_detail(struct enum_detail *ed);
+static void pp_unpack_struct_detail(struct struct_detail *sd);
+static void pp_unpack_union_detail(struct union_detail *ud);
+static void pp_unpack_decl(struct decl *d);
+
+/*----------------------------------------------------------------*/
+
+static void unpacker(const char *t)
+{
+        emit("lambda {|txt| unpack_%s(txt)}", t);
+}
+
+static void pp_unpack_const_def(struct const_def *cd)
+{
+        /* the const definition from the pack routine will surfice */
+}
+
+static void pp_unpack_decl_internal(struct decl_internal *di)
+{
+        switch (di->type) {
+        case DECL_SIMPLE:
+                pp_unpack_type(di->u.simple.t);
+                break;
+
+        case DECL_ARRAY:
+                emit("unpack_array(");
+                pp_expr(di->u.array.e);
+                emit(", ");
+                pp_unpack_type(di->u.array.t); emit(")");
+                break;
+
+        case DECL_VAR_ARRAY:
+                emit("unpack_var_array("); push(); nl();
+                pp_unpack_type(di->u.array.t); emit(")");
+                pop();
+                break;
+
+        case DECL_OPAQUE:
+                emit("unpack_opaque(");
+                pp_expr(di->u.opaque.e);
+                emit(")");
+                break;
+
+        case DECL_VAR_OPAQUE:
+                emit("unpack_var_opaque()");
+                break;
+
+        case DECL_STRING:
+                unpacker("string");
+                break;
+
+        case DECL_POINTER:
+                emit("unpack_pointer("); push(); nl();
+                pp_unpack_type(di->u.pointer.t);
+                pop(); emit(")");
+                break;
+        }
+}
+
+static void pp_unpack_typedef_internal(struct typedef_internal *ti)
+{
+        switch (ti->type) {
+        case DEF_SIMPLE:
+                pp_unpack_decl_internal(ti->u.tsimple.di); nl();
+                break;
+
+        case DEF_ENUM:
+                pp_unpack_enum_detail(ti->u.tenum.ed);
+                break;
+
+        case DEF_STRUCT:
+                pp_unpack_struct_detail(ti->u.tstruct.sd);
+                break;
+
+        case DEF_UNION:
+                pp_unpack_union_detail(ti->u.tunion.ud);
+                break;
+        }
+}
+
+static void pp_unpack_typedef(struct typedef_ *td)
+{
+        emit("def unpack_%s(txt)", td->identifier); push(); nl();
+        emit("unpacker = ");
+        pp_unpack_typedef_internal(td->ti); nl();
+        emit("unpacker.call(txt)");
+        nl(); pop(); emit("end");
+}
+
+static void pp_unpack_type(struct type *t)
+{
+        switch (t->type) {
+        case TINT:
+                unpacker("int");
+                break;
+
+        case TUINT:
+                unpacker("uint");
+                break;
+
+        case THYPER:
+                unpacker("hyper");
+                break;
+
+        case TUHYPER:
+                unpacker("uhyper");
+                break;
+
+        case TFLOAT:
+                unpacker("float");
+                break;
+
+        case TDOUBLE:
+                unpacker("double");
+                break;
+
+        case TBOOL:
+                unpacker("bool");
+                break;
+
+        case TENUM:
+                pp_unpack_enum_detail(t->u.tenum.ed);
+                break;
+
+        case TSTRUCT:
+                pp_unpack_struct_detail(t->u.tstruct.sd);
+                break;
+
+        case TUNION:
+                pp_unpack_union_detail(t->u.tunion.ud);
+                break;
+
+        case TTYPEDEF:
+                unpacker(t->u.ttypedef.t);
+                break;
+        }
+}
+
+static void pp_unpack_enum_detail(struct enum_detail *ed)
+{
+        struct const_def *cd;
+
+        emit("begin"); push(); nl();
+        emit("last = 0"); nl();
+        emit("unpack_enum("); push(); nl();
+        list_iterate_items(cd, &ed->fields) {
+                emit("EnumDetail.new(");
+                if (cd->ce) {
+                        emit("last = ");
+                        pp_expr(cd->ce);
+                } else {
+                        nl();
+                        emit("begin"); push(); nl();
+                        emit("old__ = last"); nl();
+                        emit("last = last + 1"); nl();
+                        emit("old__"); nl();
+                        pop(); emit("end"); nl();
+                }
+
+                emit(", ");
+                emit(":%s)", cd->identifier);
+
+                if (cd->list.n != &ed->fields) {
+                        emit(","); nl();
+                }
+        }
+        emit(")"); pop(); nl();
+        pop(); emit("end");
+}
+
+static void pp_unpack_struct_detail(struct struct_detail *sd)
+{
+        struct decl *d;
+
+        emit("unpack_struct("); push(); nl();
+        list_iterate_items(d, &sd->decls) {
+                emit("FieldDetail.new("); push(); nl();
+                pp_unpack_decl(d); emit(","); nl();
+                emit(":%s)", d->u.tother.identifier);
+                if (d->list.n != &sd->decls)
+                        emit(",");
+                pop(); nl();
+        }
+        pop();
+        emit(")");
+}
+
+static void pp_unpack_decl(struct decl *d)
+{
+        switch(d->type) {
+        case DECL_VOID:
+                emit("''");
+                break;
+
+        case DECL_OTHER:
+                pp_unpack_decl_internal(d->u.tother.di);
+                break;
+        }
+}
+
+static void pp_unpack_union_detail(struct union_detail *ud)
+{
+        struct case_entry *ce;
+        emit("unpack_union("); push(); nl();
+
+        /* Discriminator */
+        emit("FieldDetail.new("); push(); nl();
+        pp_unpack_decl(ud->discriminator); emit(","); nl();
+        emit(":%s),", ud->discriminator->u.tother.identifier); pop(); nl();
+
+        /* Cases */
+        emit("["); push(); nl();
+        list_iterate_items(ce, &ud->cases) {
+                emit("CaseDetail.new("); push(); nl();
+                pp_expr(ce->ce); emit(","); nl();
+                pp_unpack_decl(ce->d); emit(","); nl();
+
+                if (ce->d->type == DECL_VOID)
+                        emit("unpack_void()");
+                else
+                        emit(":%s", ce->d->u.tother.identifier);
+                emit(")");
+
+                if (ce->list.n != &ud->cases)
+                        emit(",");
+
+                pop(); nl();
+        }
+        pop(); emit("]");
+
+        /* Default */
+        if (ud->default_case) {
+                emit(","); nl();
+                emit("FieldDetail("); push(); nl();
+                pp_unpack_decl(ud->default_case); emit(","); nl();
+                if (ud->default_case->type == DECL_VOID)
+                        emit("unpack_void()");
+                else
+                        emit(":%s", ud->default_case->u.tother.identifier);
+                emit(")"); pop(); nl();
+        } else
+                emit("nil)");
+
+        pop(); emit(")");
+}
+
 
 void print_ruby(struct specification *spec)
 {
@@ -250,11 +513,13 @@ void print_ruby(struct specification *spec)
         list_iterate_items(def, &spec->definitions) {
                 switch (def->type) {
                 case DEF_TYPEDEF:
-                        pp_typedef(def->u.ttypedef.td);
+                        pp_pack_typedef(def->u.ttypedef.td); nl(); nl();
+                        pp_unpack_typedef(def->u.ttypedef.td); nl(); nl();
                         break;
 
                 case DEF_CONSTANT:
-                        pp_const_def(def->u.tconst.cd);
+                        pp_pack_const_def(def->u.tconst.cd); nl(); nl();
+                        pp_unpack_const_def(def->u.tconst.cd); nl(); nl();
                 }
                 nl();
         }

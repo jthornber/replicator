@@ -82,4 +82,16 @@ class TestXdr < Test::Unit::TestCase
     rs, _ = unpacker.call(txt)
     assert_equal([34, 45], rs)
   end
+
+  def test_unpack_struct
+    txt = pack_uint(34) + pack_uint(45)
+
+    fn = lambda {|v| unpack_uint(v)}
+    unpacker = unpack_struct(FieldDetail.new(fn, :v1),
+                             FieldDetail.new(fn, :v2))
+
+    r, _ = unpacker.call(txt)
+    assert_equal(34, r.v1)
+    assert_equal(45, r.v2)
+  end    
 end
