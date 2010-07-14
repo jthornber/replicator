@@ -165,7 +165,7 @@ static void pp_type(struct type *t, var_t v)
                 break;
 
         case TTYPEDEF:
-                emit("pack_%s(v)", t->u.ttypedef.t);
+                emit("pack_%s(", t->u.ttypedef.t); emit_var(v); emit(")");
                 break;
         }
 }
@@ -224,7 +224,7 @@ static void pp_union_detail(struct union_detail *ud, var_t v)
         emit("["); push(); nl();
         {
                 var_t discriminator = field(v, ud->discriminator->u.tother.identifier);
-                pp_decl(ud->discriminator, discriminator); emit(","); nl();
+                pp_decl(ud->discriminator, v); emit(","); nl();
                 emit("case "); emit_var(discriminator); nl();
                 list_iterate_items(ce, &ud->cases) {
                         emit("when "); pp_expr(ce->ce); push(); nl();
