@@ -77,8 +77,9 @@ class TestXdr < Test::Unit::TestCase
     txt = pack_uint(34) + pack_uint(45)
 
     fn = lambda {|v| unpack_uint(v)}
+    unpacker = unpack_many(fn, fn)
 
-    rs, _ = unpack_many([fn, fn], txt)
+    rs, _ = unpacker.call(txt)
     assert_equal([34, 45], rs)
   end
 end
