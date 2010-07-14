@@ -72,4 +72,13 @@ class TestXdr < Test::Unit::TestCase
       pack_array(6, a) {|v| pack_uint(v)}
     end
   end
+
+  def test_unpack_many
+    txt = pack_uint(34) + pack_uint(45)
+
+    fn = lambda {|v| unpack_uint(v)}
+
+    rs, _ = unpack_many([fn, fn], txt)
+    assert_equal([34, 45], rs)
+  end
 end

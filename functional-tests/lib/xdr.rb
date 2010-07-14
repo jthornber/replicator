@@ -137,4 +137,15 @@ module XDR
     end
     [v, txt]
   end
+
+  # utility function to apply a series of unpackers
+  def unpack_many(unpackers, txt)
+    results = Array.new
+    unpackers.each do |u|
+      v, txt = u.call(txt)
+      results << v
+    end
+
+    [results, txt]
+  end
 end
