@@ -112,4 +112,11 @@ memcheck: test-programs
 
 ruby-test:
 	$(RUBY) report-generators/test/ts.rb
-	$(RUBY-FT) functional-tests/tests/ts.rb
+
+.PHONEY: ft
+ft: functional-tests/lib/protocol.rb
+	$(RUBY-FT) functional-tests/tests/functional_tests.rb
+
+functional-tests/lib/protocol.rb: src/replicator/src/protocol.xdr bin/xdrgen
+	@echo '    [XDRGEN] '$@
+	$(Q)$(XDRGEN) --format ruby -o $@ src/replicator/src/protocol.xdr

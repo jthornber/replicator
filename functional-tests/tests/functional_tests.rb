@@ -1,0 +1,1 @@
+require 'tc_journal'

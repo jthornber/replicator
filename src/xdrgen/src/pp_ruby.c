@@ -186,8 +186,8 @@ static void emit_enum_table(struct enum_detail *ed)
                         pp_expr(cd->ce); nl();
                         emit("last = "); pp_expr(cd->ce); nl();
                 } else {
-                        emit("last = last + 1"); nl();
                         emit("table[:%s] = last", cd->identifier); nl();
+                        emit("last = last + 1"); nl();
                 }
 
                 nl();
@@ -248,6 +248,7 @@ static void pp_pack_union_detail(struct union_detail *ud, var_t v)
                         pp_pack_decl(ud->default_case, field(v, "u"));
                         pop(); nl();
                 }
+                emit("end"); nl();
         }
         pop();
         emit("].join");
@@ -282,26 +283,26 @@ static void pp_unpack_decl_internal(struct decl_internal *di)
                 break;
 
         case DECL_ARRAY:
-                emit("unpack_array(");
+                emit("unpack_array_fn(");
                 pp_expr(di->u.array.e);
                 emit(", ");
                 pp_unpack_type(di->u.array.t); emit(")");
                 break;
 
         case DECL_VAR_ARRAY:
-                emit("unpack_var_array("); push(); nl();
+                emit("unpack_var_array_fn("); push(); nl();
                 pp_unpack_type(di->u.array.t); emit(")");
                 pop();
                 break;
 
         case DECL_OPAQUE:
-                emit("unpack_opaque(");
+                emit("unpack_opaque_fn(");
                 pp_expr(di->u.opaque.e);
                 emit(")");
                 break;
 
         case DECL_VAR_OPAQUE:
-                emit("unpack_var_opaque()");
+                emit("unpack_var_opaque_fn()");
                 break;
 
         case DECL_STRING:
@@ -309,7 +310,7 @@ static void pp_unpack_decl_internal(struct decl_internal *di)
                 break;
 
         case DECL_POINTER:
-                emit("unpack_pointer("); push(); nl();
+                emit("unpack_pointer_fn("); push(); nl();
                 pp_unpack_type(di->u.pointer.t);
                 pop(); emit(")");
                 break;
@@ -400,30 +401,25 @@ static void pp_unpack_enum_detail(struct enum_detail *ed)
         struct const_def *cd;
 
         emit("begin"); push(); nl();
+        emit("table = Array.new"); nl();
         emit("last = 0"); nl();
-        emit("unpack_enum("); push(); nl();
         list_iterate_items(cd, &ed->fields) {
-                emit("EnumDetail.new(");
+                emit("table << EnumDetail.new(");
+                if (cd->ce)
+                        pp_expr(cd->ce);
+                else
+                        emit("last");
+                emit(", ");
+                emit(":%s)", cd->identifier); nl();
+
                 if (cd->ce) {
                         emit("last = ");
                         pp_expr(cd->ce);
-                } else {
-                        nl();
-                        emit("begin"); push(); nl();
-                        emit("old__ = last"); nl();
-                        emit("last = last + 1"); nl();
-                        emit("old__"); nl();
-                        pop(); emit("end"); nl();
-                }
-
-                emit(", ");
-                emit(":%s)", cd->identifier);
-
-                if (cd->list.n != &ed->fields) {
-                        emit(","); nl();
-                }
+                } else
+                        emit("last = last + 1");
+                nl();
         }
-        emit(")"); pop(); nl();
+        emit("unpack_enum_fn(table)"); nl();
         pop(); emit("end");
 }
 
@@ -431,7 +427,7 @@ static void pp_unpack_struct_detail(struct struct_detail *sd)
 {
         struct decl *d;
 
-        emit("unpack_struct("); push(); nl();
+        emit("unpack_struct_fn("); push(); nl();
         list_iterate_items(d, &sd->decls) {
                 emit("FieldDetail.new("); push(); nl();
                 pp_unpack_decl(d); emit(","); nl();
@@ -460,7 +456,7 @@ static void pp_unpack_decl(struct decl *d)
 static void pp_unpack_union_detail(struct union_detail *ud)
 {
         struct case_entry *ce;
-        emit("unpack_union("); push(); nl();
+        emit("unpack_union_fn("); push(); nl();
 
         /* Discriminator */
         emit("FieldDetail.new("); push(); nl();
@@ -475,7 +471,7 @@ static void pp_unpack_union_detail(struct union_detail *ud)
                 pp_unpack_decl(ce->d); emit(","); nl();
 
                 if (ce->d->type == DECL_VOID)
-                        emit("unpack_void()");
+                        emit("unpack_void_fn()");
                 else
                         emit(":%s", ce->d->u.tother.identifier);
                 emit(")");
@@ -485,7 +481,7 @@ static void pp_unpack_union_detail(struct union_detail *ud)
 
                 pop(); nl();
         }
-        pop(); emit("]");
+        pop(); emit("],"); nl();
 
         /* Default */
         if (ud->default_case) {
@@ -493,12 +489,12 @@ static void pp_unpack_union_detail(struct union_detail *ud)
                 emit("FieldDetail("); push(); nl();
                 pp_unpack_decl(ud->default_case); emit(","); nl();
                 if (ud->default_case->type == DECL_VOID)
-                        emit("unpack_void()");
+                        emit("unpack_void_fn()");
                 else
                         emit(":%s", ud->default_case->u.tother.identifier);
-                emit(")"); pop(); nl();
+                pop(); nl();
         } else
-                emit("nil)");
+                emit("nil");
 
         pop(); emit(")");
 }
@@ -508,7 +504,10 @@ void print_ruby(struct specification *spec)
 {
         struct definition *def;
 
-        emit("require 'xdr'"); nl(); nl();
+        emit("require 'xdr'"); nl();
+        emit("require 'xdr_utils'"); nl(); nl();
+        emit("include XDR"); nl();
+        emit("include XDRUtils"); nl(); nl();
 
         list_iterate_items(def, &spec->definitions) {
                 switch (def->type) {

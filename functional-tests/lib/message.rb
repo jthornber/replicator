@@ -1,6 +1,12 @@
 class Message
+  attr_reader :fields
+  
   def initialize(fields = nil)
     @fields = fields.nil? ? Hash.new : fields
+  end
+
+  def ==(rhs)
+    @fields == rhs.fields
   end
 
   def []=(key, value)

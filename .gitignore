@@ -10,6 +10,8 @@ lib/*
 include/*
 
 src/replicator/src/protocol.[hc]
+functional-tests/lib/protocol.rb
 reports/
 
 *_t
+
