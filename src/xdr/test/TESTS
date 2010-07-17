@@ -1,1 +1,1 @@
-xdr buffers:$(TEST_TOOL) ./xdr_t
+xdr buffers:$TEST_TOOL ./xdr_t
