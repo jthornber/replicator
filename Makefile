@@ -114,8 +114,8 @@ ruby-test:
 	$(RUBY) report-generators/test/ts.rb
 
 .PHONEY: ft
-ft: functional-tests/lib/protocol.rb
-	$(RUBY-FT) functional-tests/tests/functional_tests.rb
+ft: functional-tests/lib/protocol.rb bin/replicator
+	$(RUBY-FT) functional-tests/tests/ts.rb
 
 functional-tests/lib/protocol.rb: src/replicator/src/protocol.xdr bin/xdrgen
 	@echo '    [XDRGEN] '$@

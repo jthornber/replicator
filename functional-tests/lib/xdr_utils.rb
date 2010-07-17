@@ -52,7 +52,7 @@ module XDRUtils
 
   EnumDetail = Struct.new(:const, :symbol)
 
-  def unpack_enum_fn(*details)
+  def unpack_enum_fn(details)
     lambda do |txt|
       n, txt = unpack_uint(txt)
       details.each do |d|
@@ -89,7 +89,9 @@ module XDRUtils
       v[discriminator.name] = d
       cases.each do |c|
         if d == c.const
-          v[c.name], txt = c.unpacker.call(txt)
+          if !c.name.nil?
+            v[c.name], txt = c.unpacker.call(txt)
+          end
           return [v, txt]
         end
       end

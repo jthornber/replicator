@@ -116,9 +116,9 @@ class TestXdr < Test::Unit::TestCase
   end
 
   def test_enum_unpacker
-    fn = unpack_enum_fn(EnumDetail.new(5, :red),
-                        EnumDetail.new(6, :blue),
-                        EnumDetail.new(45, :green))
+    fn = unpack_enum_fn([EnumDetail.new(5, :red),
+                         EnumDetail.new(6, :blue),
+                         EnumDetail.new(45, :green)])
 
     v, txt = fn.call(pack_uint(5))
     assert_equal(:red, v)

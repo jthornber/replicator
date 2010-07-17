@@ -21,7 +21,12 @@ class TestJournal < Test::Unit::TestCase
     assert_equal(binding, b2)
   end
 
-  
+  def test_response
+    resp = Message.new(:discriminator => :SUCCESS)
+    txt = pack_response(resp)
+    r2, _ = unpack_response(txt)
+    assert_equal(resp, r2)
+  end
 
   # def test_startup
   #   exe = 'bin/replicator'
