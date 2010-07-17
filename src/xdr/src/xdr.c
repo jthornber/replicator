@@ -28,6 +28,7 @@ struct xdr_buffer *xdr_buffer_create(size_t size_hint)
 
         b->chunk_size = size_hint;
         list_init(&b->chunks);
+        b->allocated = 0;
 
         return b;
 }
@@ -51,6 +52,7 @@ int xdr_buffer_add_block(struct xdr_buffer *buf, void *data, size_t len)
         c->end = data + len;
         c->alloc_end = c->end;
         list_add(&buf->chunks, &c->list);
+        buf->allocated += len;
 
         return 1;
 }
@@ -63,7 +65,7 @@ size_t chunk_space_(struct chunk *c)
 /*
  * Slow path.
  */
-static int write_new_chunk_(struct xdr_buffer *buf, void *data, size_t len)
+static int write_new_chunk_(struct xdr_buffer *buf, const void *data, size_t len)
 {
         size_t clen;
         struct chunk *c;
@@ -88,7 +90,7 @@ static inline uint32_t min(uint32_t lhs, uint32_t rhs)
         return lhs <= rhs ? lhs : rhs;
 }
 
-static inline int write_(struct xdr_buffer *buf, void *data, size_t len)
+static inline int write_(struct xdr_buffer *buf, const void *data, size_t len)
 {
         struct chunk *c;
         struct list *last = list_last(&buf->chunks);
@@ -111,7 +113,7 @@ static inline uint32_t calc_padding(uint32_t len)
         return remains ? 4 - remains : 0;
 }
 
-int xdr_buffer_write(struct xdr_buffer *buf, void *data, uint32_t len)
+int xdr_buffer_write(struct xdr_buffer *buf, const void *data, uint32_t len)
 {
         int r = write_(buf, data, len);
         uint32_t padding = calc_padding(len);
@@ -121,12 +123,15 @@ int xdr_buffer_write(struct xdr_buffer *buf, void *data, uint32_t len)
                 r  = write_(buf, &zeroes, padding);
         }
 
+        if (r)
+                buf->allocated += len + padding;
+
         return r;
 }
 
 size_t xdr_buffer_size(struct xdr_buffer *buf)
 {
-        return buf->allocated;
+         return buf->allocated;
 }
 
 /*--------------------------------*/

@@ -73,10 +73,20 @@ void test_write()
         xdr_buffer_destroy(b);
 }
 
+void test_size()
+{
+        const char *msg = "hello";
+        struct xdr_buffer *b = xdr_buffer_create(1024);
+        assert(b);
+        assert(xdr_buffer_write(b, msg, strlen(msg)));
+        assert(xdr_buffer_size(b) == 8);
+}
+
 int main(int argc, char **argv)
 {
         test_create_destroy();
         test_add_block();
         test_write();
+        test_size();
         return 0;
 }

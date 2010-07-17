@@ -35,7 +35,7 @@ int xdr_buffer_add_block(struct xdr_buffer *buf, void *data, size_t len);
  */
 
 /* FIXME: doesn't yet have atomic semantics ! */
-int xdr_buffer_write(struct xdr_buffer *buf, void *data, uint32_t len);
+int xdr_buffer_write(struct xdr_buffer *buf, const void *data, uint32_t len);
 
 size_t xdr_buffer_size(struct xdr_buffer *buf);
 
@@ -58,7 +58,7 @@ typedef int (*xdr_unpack_fn)(struct xdr_cursor *c, struct pool *, void **);
 int xdr_unpack_using_(xdr_unpack_fn fn, void *data, size_t len,
                       struct pool *mem, void **result);
 #define xdr_unpack_using(fn, data, len, mem, result)                     \
-        xdr_unpack_using_((xdr_unpack_fn) xdr_unpack_ ##fn, data, len, mem, (void **) result)
+        xdr_unpack_using_((xdr_unpack_fn) xdr_unpack_ ## fn, data, len, mem, (void **) result)
 
 /*--------------------------------*/
 
