@@ -479,7 +479,7 @@ static void unpack_type(struct type *t, var_t v)
 
 static void unpack_enum_detail(struct enum_detail *ed, var_t v)
 {
-        emit("if (!xdr_unpack_uint(c, (uint *) "); emit_var(v); emit("))"); push(); nl();
+        emit("if (!xdr_unpack_uint(c, (uint *) "); emit_var(ref(v)); emit("))"); push(); nl();
         emit("return 0;"); pop(); nl();
 }
 
