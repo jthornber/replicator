@@ -5,19 +5,16 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/socket.h>
 #include <sys/times.h>
+#include <sys/types.h>
 #include <time.h>
 #include <ucontext.h>
 #include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-
-#if DEBUG
-#include <stdio.h>
-#endif
 
 /*----------------------------------------------------------------*/
 
@@ -28,6 +25,7 @@ struct process {
         void *stack;
 
         /* io manager fields */
+        int blocked_fd;
         struct epoll_event ev;
 
         /* sleep */
@@ -125,6 +123,9 @@ process_t csp_self()
 
 void csp_kill(process_t pid)
 {
+        /* FIXME: if this is blocked on io we need to remove it from the
+         * epoll handle */
+
         list_del(&pid->list);
         free_process(pid);
 }
@@ -162,11 +163,13 @@ static void io_exit()
 
 static int io_wait(process_t p, int fd, enum io_type direction)
 {
-        p->ev.events = (direction == READ ? EPOLLIN : EPOLLOUT) | EPOLLET;
+        p->ev.events = (direction == READ ? (EPOLLIN | EPOLLRDHUP) : EPOLLOUT) | EPOLLET;
         p->ev.data.ptr = p;
-        p->ev.data.fd = fd;
-        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &p->ev) == -1)
+        p->blocked_fd = fd;
+        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &p->ev) == -1) {
+                perror("epoll_ctl failed");
                 return 0;
+        }
         list_del(&p->list);
         io_count++;
         swapcontext(&p->cpu_state, &scheduler_);
@@ -195,7 +198,7 @@ static void io_check(unsigned milli)
         for (i = 0; i < nfds; i++) {
                 process_t p = (process_t) events[i].data.ptr;
 
-                if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, p->ev.data.fd, &p->ev) == -1) {
+                if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, p->blocked_fd, &p->ev) == -1) {
                         /* FIXME: log something */
                 }
 
@@ -207,9 +210,10 @@ ssize_t csp_read(int fd, void *buf, size_t count)
 {
         for (;;) {
                 int n = read(fd, buf, count);
-                if (n < 0 && errno == EAGAIN)
-                        io_wait(csp_self(), fd, READ);
-                else {
+                if (n < 0 && errno == EAGAIN) {
+                        if (!io_wait(csp_self(), fd, READ))
+                                return -1;
+                } else {
                         csp_yield();
                         return n;
                 }
@@ -220,9 +224,10 @@ ssize_t csp_write(int fd, const void *buf, size_t count)
 {
         for (;;) {
                 int n = write(fd, buf, count);
-                if (n < 0 && errno == EAGAIN)
-                        io_wait(csp_self(), fd, WRITE);
-                else {
+                if (n < 0 && errno == EAGAIN) {
+                        if (!io_wait(csp_self(), fd, WRITE))
+                                return -1;
+                } else {
                         csp_yield();
                         return n;
                 }
@@ -238,9 +243,10 @@ int csp_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 {
         for (;;) {
                 int fd = accept(sockfd, addr, addrlen);
-                if (fd < 0 && errno == EAGAIN)
-                        io_wait(csp_self(), sockfd, READ);
-                else {
+                if (fd < 0 && errno == EAGAIN) {
+                        if (!io_wait(csp_self(), sockfd, READ))
+                                return -1;
+                } else {
                         csp_yield();
                         return fd;
                 }
@@ -382,7 +388,8 @@ int csp_start()
         for (;;) {
                 reap();
                 if (list_empty(&schedulable_) &&
-                    list_empty(&sleepers_))
+                    list_empty(&sleepers_) &&
+                    io_count == 0)
                         break;
                 else
                         schedule();
