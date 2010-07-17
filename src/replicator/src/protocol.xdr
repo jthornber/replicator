@@ -1,4 +1,16 @@
 /*
+ * Handshaking it log on.  There are 3 version numbers:
+ * major - no compatibility
+ * minor - backwards compatibility
+ * patch - backwards and forwards compatibility
+ */
+struct version {
+        unsigned int major;
+        unsigned int minor;
+        unsigned int patch;
+};
+
+/*
  * Protocol accepted by the replicator tcp server.
  */
 struct device_binding {
@@ -13,6 +25,8 @@ struct io_detail {
 };
 
 enum command_type {
+        LOGON,
+
         JOURNAL_OPEN,
         JOURNAL_CLOSE,
         JOURNAL_IO,
@@ -21,6 +35,9 @@ enum command_type {
 };
 
 union command switch (command_type discriminator) {
+case LOGON:
+        version logon;
+
 case JOURNAL_OPEN:
         device_binding devices<>;
 
@@ -48,7 +65,7 @@ case JOURNAL_ROLLBACK:
  * The responses do not neccesarily come in request order, so we use
  * |request_id| to tie together request and response.
  */
-struct request_header {
+struct msg_header {
         unsigned int msg_size;
         unsigned int request_id;
 };
@@ -58,14 +75,11 @@ enum response_code {
         FAIL
 };
 
-struct response {
-        unsigned int request_id;
+union response switch (response_code discriminator) {
+case SUCCESS:
+        void;
 
-        union switch (response_code discriminator) {
-        case SUCCESS:
-                void;
-
-        case FAIL:
-                string reason<>;
-        } outcome;
+case FAIL:
+        string reason<>;
 };
+
