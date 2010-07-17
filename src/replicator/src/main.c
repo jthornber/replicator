@@ -25,16 +25,16 @@ struct server {
         struct list clients;
 };
 
-int read_request(int fd, struct dynamic_buffer *db, struct pool *mem, command **result, uint32_t *req_id)
+static int read_request(int fd, struct dynamic_buffer *db, struct pool *mem, command **result, uint32_t *req_id)
 {
         void *data;
-        request_header header_raw, *header;
+        msg_header header_raw, *header;
 
         /* read the header */
         if (csp_read_exact(fd, &header_raw, sizeof(header)) < 0)
                 return 0;
 
-        if (!xdr_unpack_using(request_header, &header_raw, sizeof(header_raw), mem, &header))
+        if (!xdr_unpack_using(msg_header_alloc, &header_raw, sizeof(header_raw), mem, &header))
                 return 0;
 
         /* read the payload */
@@ -42,11 +42,83 @@ int read_request(int fd, struct dynamic_buffer *db, struct pool *mem, command **
         if (csp_read_exact(fd, data, header->msg_size) < 0)
                 return 0;
 
-        if (!xdr_unpack_using(command, data, header->msg_size, mem, result))
+        if (!xdr_unpack_using(command_alloc, data, header->msg_size, mem, result))
                 return 0;
 
         *req_id = header->request_id;
         return 1;
+}
+
+static int write_buffer(int fd, struct xdr_buffer *buf)
+{
+        struct xdr_cursor *c = NULL;
+
+        int r = 0;
+        size_t len = xdr_buffer_size(buf);
+        void *data = malloc(len);
+
+        if (!data)
+                return 0;
+
+        c = xdr_cursor_create(buf);
+        if (!c)
+                goto out;
+
+        if (!xdr_cursor_read(c, data, len))
+                goto out;
+
+        fprintf(stderr, "replicator writing %u bytes to socket\n", (unsigned int) len);
+        if (!csp_write_exact(fd, data, len))
+                goto out;
+
+        r = 1;
+
+out:
+        if (c)
+                xdr_cursor_destroy(c);
+        free(data);
+
+        return r;
+}
+
+static int write_response(int fd, uint32_t req_id, response *resp)
+{
+        int r = 0;
+        msg_header header;
+        struct xdr_buffer *buf = NULL, *buf2 = NULL;
+
+        buf = xdr_buffer_create(128);
+        if (!buf)
+                goto out;
+
+        if (!xdr_pack_response(buf, resp))
+                goto out;
+
+        header.request_id = req_id;
+        header.msg_size = xdr_buffer_size(buf);
+
+        buf2 = xdr_buffer_create(8);
+        if (!buf2)
+                goto out;
+
+        if (!xdr_pack_msg_header(buf2, &header))
+                goto out;
+
+        if (!write_buffer(fd, buf2))
+                goto out;
+
+        if (!write_buffer(fd, buf))
+                goto out;
+
+        r = 1;
+
+out:
+        if (buf)
+                xdr_buffer_destroy(buf);
+        if (buf2)
+                xdr_buffer_destroy(buf2);
+
+        return r;
 }
 
 struct server *prepare_server(const char *host, int port)
@@ -69,6 +141,9 @@ struct server *prepare_server(const char *host, int port)
         server_address.sin_addr.s_addr = htonl(INADDR_ANY);
         server_address.sin_port = htons(port);
 
+        int flag = 1;
+        setsockopt(s->listen_socket, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
+
         if (bind(s->listen_socket, (struct sockaddr *) &server_address, sizeof(server_address)) < 0) {
                 close(s->listen_socket);
                 free(s);
@@ -80,6 +155,8 @@ struct server *prepare_server(const char *host, int port)
                 free(s);
                 return NULL;
         }
+
+        csp_set_non_blocking(s->listen_socket);
 
         s->stop_requested = 0;
         list_init(&s->clients);
@@ -95,12 +172,15 @@ void client_loop(struct client *c)
 
         for (;;) {
                 command *cmd;
+                response resp;
                 uint32_t req_id;
 
                 if (!read_request(c->socket, c->db, mem, &cmd, &req_id))
                         break;
 
-                /* FIXME: do something with the command */
+                resp.discriminator = SUCCESS;
+                if (!write_response(c->socket, req_id, &resp))
+                        break;
 
                 pool_empty(mem);
         }
@@ -115,8 +195,10 @@ void listen_loop(struct server *s)
                 struct client *c;
 
                 client = csp_accept(s->listen_socket, (struct sockaddr *) &client_address, &len);
-                if (client < 0)
-                        break;
+                if (client < 0) {
+                        fprintf(stderr, "couldn't accept on socket\n");
+                        exit(1);
+                }
 
                 c = malloc(sizeof(*c));
                 if (!c) {
