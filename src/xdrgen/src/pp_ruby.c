@@ -239,13 +239,13 @@ static void pp_pack_union_detail(struct union_detail *ud, var_t v)
                 pp_pack_decl(ud->discriminator, v); emit(","); nl();
                 emit("case "); emit_var(discriminator); nl();
                 list_iterate_items(ce, &ud->cases) {
-                        emit("when "); pp_expr(ce->ce); push(); nl();
-                        pp_pack_decl(ce->d, field(v, "u")); nl(); pop();
+                        emit("when :"); pp_expr(ce->ce); push(); nl();
+                        pp_pack_decl(ce->d, v); nl(); pop();
                 }
 
                 if (ud->default_case) {
                         emit("else"); push(); nl();
-                        pp_pack_decl(ud->default_case, field(v, "u"));
+                        pp_pack_decl(ud->default_case, v);
                         pop(); nl();
                 }
                 emit("end"); nl();
@@ -444,7 +444,7 @@ static void pp_unpack_decl(struct decl *d)
 {
         switch(d->type) {
         case DECL_VOID:
-                emit("''");
+                emit("unpack_void_fn()");
                 break;
 
         case DECL_OTHER:
@@ -467,11 +467,10 @@ static void pp_unpack_union_detail(struct union_detail *ud)
         emit("["); push(); nl();
         list_iterate_items(ce, &ud->cases) {
                 emit("CaseDetail.new("); push(); nl();
-                pp_expr(ce->ce); emit(","); nl();
+                emit(":"); pp_expr(ce->ce); emit(","); nl();
                 pp_unpack_decl(ce->d); emit(","); nl();
-
                 if (ce->d->type == DECL_VOID)
-                        emit("unpack_void_fn()");
+                        emit("nil");
                 else
                         emit(":%s", ce->d->u.tother.identifier);
                 emit(")");
