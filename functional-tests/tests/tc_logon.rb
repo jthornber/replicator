@@ -12,7 +12,6 @@ class TestLogon < Test::Unit::TestCase
   def do_logon(major, minor, patch, expect_success)
     @replicator = Replicator.new('127.0.0.1', 6776)
     req_id = @replicator.put_request(mk_logon(major, minor, patch))
-    sleep(10)
     resp = @replicator.get_response(req_id)
     assert_equal(expect_success ? :SUCCESS : :FAIL, resp.discriminator)
 

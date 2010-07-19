@@ -1,16 +1,117 @@
 require 'protocol'
 require 'socket'
 require 'thread'
+require 'pp'
+
+class ReplicatorLog
+  def initialize(log_file)
+    @incoming = Queue.new
+    @lines = Array.new
+    @tid = reader_thread(log_file)
+  end
+
+  def shutdown()
+    Thread.kill(@tid)
+    while (@tid.alive?)
+      sleep(0.01)
+    end
+  end
+
+  def start_of_file()
+    0
+  end
+
+  def mark()
+    # make sure we're up to date
+    @incoming.size.times do
+      next_line()
+    end
+
+    mark_()
+  end
+
+  def get_txt(m1, m2 = nil)
+    m2 = mark() if m2.nil?
+    @lines[m1..m2]
+  end
+
+  def capture_log()
+    m = @log.mark();
+    r = yield
+    [@log.get_txt(m), r]
+  end
+
+  def wait_for_event(event)
+    loop do
+      l = next_line()
+      STDERR.puts "waiting for event: #{l}"
+      if l =~ /EVENT \[([^\]]*)\] (.*)/
+        if event == $1
+          return mark_()
+        end
+      end
+    end
+  end
+
+  private
+  def mark_()
+    @lines.size
+  end
+
+  def next_line()
+    l = @incoming.pop()
+    @lines << l
+    l
+  end
+
+  # waits for the file in question to appear
+  def self.open_log(file)
+    loop do
+      begin
+        STDERR.puts "trying to open log"
+        io = File.new(file)
+        return io
+      rescue
+      end
+      sleep(0.1)
+    end
+  end
+
+  def reader_thread(file)
+    io = ReplicatorLog.open_log(file)
+    STDERR.puts "log opened"
+
+    Thread.new(io, @incoming) do |file, incoming|
+      begin
+        while line = io.readline
+          incoming.push(line)
+        end
+      rescue
+        STDERR.puts "log reader thread threw exception #{pp(e)}"
+      end
+
+      STDERR.puts "log reader thread exiting"
+    end
+  end
+end
 
 class Replicator
+  attr_reader :log
+
   def initialize(host, port)
     @response_queue = Queue.new
     @responses = Hash.new
     @request_id = 0
 
+    # FIXME: hack
+    File.unlink('log.log')
+
     # start the replicator
     @replicator_pid = spawn("#{ENV['REPLICATOR_PREFIX']} bin/replicator")
-    sleep(3)                    # FIXME: we should wait on an event in the replicator log
+
+    # set up the log follower
+    @log = ReplicatorLog.new("log.log") # FIXME: hardcoded log file
+    @log.wait_for_event("SERVER_STARTED")
     STDERR.puts("replicator started (pid = #{@replicator_pid})")
 
     # connect to it

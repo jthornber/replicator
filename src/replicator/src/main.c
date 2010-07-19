@@ -2,6 +2,7 @@
 #include "csp/io.h"
 #include "csp/process.h"
 #include "datastruct/list.h"
+#include "log/log.h"
 #include "protocol.h"
 #include "utility/dynamic_buffer.h"
 
@@ -226,6 +227,7 @@ int main(int argc, char **argv)
 {
         struct server *s;
 
+        log_init(".", DEBUG, EVENT);
         csp_init();
 
         s = prepare_server("localhost", 6776); /* FIXME: get from the command line */
@@ -233,10 +235,13 @@ int main(int argc, char **argv)
                 fprintf(stderr, "couldn't start server\n");
                 return 1;
         }
+        event("SERVER_STARTED", "");
 
         csp_spawn((process_fn) listen_loop, s);
         csp_start();
 
         csp_exit();
+        log_exit();
+
         return 0;
 }
