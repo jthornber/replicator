@@ -15,3 +15,5 @@ reports/
 
 *_t
 
+*.munged
+*.log

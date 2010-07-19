@@ -21,6 +21,7 @@
 #include "log/lvm-logging.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 struct chunk {
 	char *begin, *end;
@@ -47,8 +48,8 @@ struct pool *pool_create(const char *name, size_t chunk_hint)
 	struct pool *p = malloc(sizeof(*p));
 
 	if (!p) {
-		log_error("Couldn't create memory pool %s (size %"
-			  PRIsize_t ")", name, sizeof(*p));
+		error("Couldn't create memory pool %s (size %"
+                      PRIsize_t ")", name, sizeof(*p));
 		return 0;
 	}
 	memset(p, 0, sizeof(*p));
@@ -125,8 +126,7 @@ void pool_free(struct pool *p, void *ptr)
 	}
 
 	if (!c)
-		log_error(INTERNAL_ERROR "pool_free asked to free pointer "
-			  "not in pool");
+		error("pool_free asked to free pointer not in pool");
 	else
 		p->chunk = c;
 }
@@ -228,8 +228,8 @@ struct chunk *_new_chunk(struct pool *p, size_t s)
 		p->spare_chunk = 0;
 	} else {
 		if (!(c = malloc(s))) {
-			log_error("Out of memory.  Requested %" PRIsize_t
-				  " bytes.", s);
+			error("Out of memory.  Requested %" PRIsize_t
+                              " bytes.", s);
 			return NULL;
 		}
 

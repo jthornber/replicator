@@ -1,1 +1,1 @@
-log test:$TEST_TOOL ./log_t && diff -q log_t.expected log.log
+log test:$TEST_TOOL ./log_t && ../../../scripts/strip_log.rb log.log > log.munged && diff -u log_t.expected log.munged
