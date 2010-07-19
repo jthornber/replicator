@@ -40,6 +40,7 @@ LIB_OBJECTS+=\
 LOG_DIR=src/log/src
 LIB_OBJECTS+=\
 	$(LOG_DIR)/log.o
+include src/log/test/Makefile
 
 # xdr
 XDR_DIR=src/xdr/src

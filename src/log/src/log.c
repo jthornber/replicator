@@ -1,381 +1,174 @@
-/*
- * Copyright (C) 2001-2004 Sistina Software, Inc. All rights reserved.
- * Copyright (C) 2004-2007 Red Hat, Inc. All rights reserved.
- *
- * This file is part of LVM2.
- *
- * This copyrighted material is made available to anyone wishing to use,
- * modify, copy, or redistribute it subject to the terms and conditions
- * of the GNU Lesser General Public License v.2.1.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
-
 #include "log.h"
-#include "lvm-logging.h"
-#include "datastruct/lvm-types.h"
 
+#include <assert.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdarg.h>
-#include <syslog.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+#include <string.h>
+#include <sys/time.h>
+#include <time.h>
 
-static FILE *_log_file;
-#if 0
-static struct device _log_dev;
-static struct str_list _log_dev_alias;
-#endif
+/*----------------------------------------------------------------*/
 
-static int _syslog = 0;
-static int _log_to_file = 0;
-static int _log_direct = 0;
-static int _log_while_suspended = 0;
-static int _indent = 1;
-static int _log_suppress = 0;
-static char _msg_prefix[30] = "  ";
-static int _already_logging = 0;
-static int _abort_on_internal_errors = 0;
+/*
+ * FIXME: add a lock, so only one replicator can log to a particular
+ * directory at a time.  At this point should we drop the race condition
+ * loop in next_file ?
+ */
+struct log {
+        char *dir;
+        enum log_level min_level;
+        enum log_level flush_level;
 
-static lvm2_log_fn_t _lvm2_log_fn = NULL;
+        FILE *file;
+};
 
-static int _lvm_errno = 0;
-static int _store_errmsg = 0;
-static char *_lvm_errmsg = NULL;
-
-void init_log_fn(lvm2_log_fn_t log_fn)
+static int next_filename(const char *dir, char *result, size_t len)
 {
-	if (log_fn)
-		_lvm2_log_fn = log_fn;
-	else
-		_lvm2_log_fn = NULL;
+        /* FIXME: include timestamps */
+        snprintf(result, len, "%s/log.log", dir);
+        return 1;
 }
 
-void init_log_file(const char *log_file, int append)
+static FILE *next_file(const char *dir)
 {
-	const char *open_mode = append ? "a" : "w";
+        FILE *fp;
+        char filename[PATH_MAX];
 
-	if (!(_log_file = fopen(log_file, open_mode))) {
-		log_sys_error("fopen", log_file);
-		return;
-	}
+        for (;;) {
+                if (!next_filename(dir, filename, sizeof(filename)))
+                        return NULL;
 
-	_log_to_file = 1;
+                /* we never append to a log, always opening a new one */
+                fp = fopen(filename, "w");
+
+                if (fp)
+                        return fp;
+
+                else if (errno != EEXIST)
+                        return NULL;
+        }
+
+        /* never get here */
 }
 
-void init_log_while_suspended(int log_while_suspended)
+struct log *log_create(const char *dir,
+                       enum log_level min_level,
+                       enum log_level flush_level)
 {
-	_log_while_suspended = log_while_suspended;
+        FILE *fp;
+        struct log *l;
+
+        l = malloc(sizeof(*l));
+        if (!l) {
+                fprintf(stderr, "couldn't allocate log");
+                exit(1);
+        }
+
+        l->dir = strdup(dir);
+        l->min_level = min_level;
+        l->flush_level = flush_level;
+
+        fp = next_file(dir);
+        if (!fp) {
+                free(l);
+                fprintf(stderr, "couldn't open log");
+                exit(1);
+        }
+        l->file = fp;
+
+        return l;
 }
 
-void init_syslog(int facility)
+void log_destroy(struct log *l)
 {
-	openlog("lvm", LOG_PID, facility);
-	_syslog = 1;
+        fflush(l->file);
+        fclose(l->file);
+        free(l->dir);
+        free(l);
 }
 
-int log_suppress(int suppress)
+static void check_for_rollover(struct log *l)
 {
-	int old_suppress = _log_suppress;
-
-	_log_suppress = suppress;
-
-	return old_suppress;
+        /* FIXME: finish */
 }
 
-void release_log_memory(void)
+/*
+ * FIXME: add milliseconds, also cache the second string to save
+ * reformatting it for every message.
+ */
+static void format_time(struct timeval *now, char *buffer, size_t len)
 {
-	if (!_log_direct)
-		return;
-
-	// free((char *) _log_dev_alias.str);
-	// _log_dev_alias.str = "activate_log file";
+        struct tm expanded;
+        localtime_r(&now->tv_sec, &expanded);
+        strftime(buffer, len,
+                 "%Y/%m/%d %H:%M:%S", &expanded);
 }
 
-void fin_log(void)
+void print_prefix(struct log *l, enum log_level level)
 {
-	if (_log_direct) {
-		// dev_close(&_log_dev);
-		_log_direct = 0;
-	}
+        const char *levels[FATAL + 1] = {
+                "DEBUG",
+                "INFO",
+                "WARN",
+                "EVENT",
+                "ERROR",
+                "FATAL"
+        };
 
-	if (_log_to_file) {
-#if 0
-		if (dm_fclose(_log_file)) {
-			if (errno)
-			      fprintf(stderr, "failed to write log file: %s\n",
-				      strerror(errno));
-			else
-			      fprintf(stderr, "failed to write log file\n");
+        struct timeval now;
+        struct timezone tz; // not used
+        char time_buffer[64];
 
-		}
-#endif
-		_log_to_file = 0;
-	}
+        gettimeofday(&now, &tz);
+        format_time(&now, time_buffer, sizeof(time_buffer));
+
+        fprintf(l->file, "%s %s ", time_buffer, levels[level]);
 }
 
-void fin_syslog()
+void log_vprintf(struct log *l, enum log_level level, const char *format, va_list ap)
 {
-	if (_syslog)
-		closelog();
-	_syslog = 0;
+        check_for_rollover(l);
+
+        print_prefix(l, level);
+        vfprintf(l->file, format, ap);
+        fprintf(l->file, "\n");
+
+        if (level >= l->flush_level)
+                fflush(l->file);
 }
 
-void init_msg_prefix(const char *prefix)
+/*----------------------------------------------------------------*/
+
+/*
+ * Global log, we could move this to a separate file, except we'd incur
+ * extra function call overhead.
+ */
+static struct log *log_ = NULL;
+
+void log_init(const char *dir,
+              enum log_level min_level,
+              enum log_level flush_level)
 {
-	strncpy(_msg_prefix, prefix, sizeof(_msg_prefix));
-	_msg_prefix[sizeof(_msg_prefix) - 1] = '\0';
+        assert(!log_);
+        log_ = log_create(dir, min_level, flush_level);
 }
 
-void init_indent(int indent)
+void log_exit()
 {
-	_indent = indent;
+        log_destroy(log_);
+        log_ = NULL;
 }
 
-void init_abort_on_internal_errors(int fatal)
+void log_printf(enum log_level level, const char *fmt, ...)
 {
-	_abort_on_internal_errors = fatal;
+        va_list ap;
+
+        va_start(ap, fmt);
+        log_vprintf(log_, level, fmt, ap);
+        va_end(ap);
 }
 
-void reset_lvm_errno(int store_errmsg)
-{
-	_lvm_errno = 0;
-
-	if (_lvm_errmsg) {
-		free(_lvm_errmsg);
-		_lvm_errmsg = NULL;
-	}
-
-	_store_errmsg = store_errmsg;
-}
-
-int stored_errno(void)
-{
-	return _lvm_errno;
-}
-
-const char *stored_errmsg(void)
-{
-	return _lvm_errmsg ? : "";
-}
-
-#if 0
-static struct dm_hash_table *_duplicated = NULL;
-
-void reset_log_duplicated(void) {
-	if (_duplicated)
-		dm_hash_destroy(_duplicated);
-	_duplicated = NULL;
-}
-#endif
-
-void print_log(int level, const char *file, int line, int dm_errno,
-	       const char *format, ...)
-{
-#if 0
-	va_list ap;
-	char buf[1024], buf2[4096], locn[4096];
-	int bufused, n;
-	const char *message;
-	const char *trformat;		/* Translated format string */
-	char *newbuf;
-	int use_stderr = level & _LOG_STDERR;
-	int log_once = level & _LOG_ONCE;
-	int fatal_internal_error = 0;
-
-	level &= ~(_LOG_STDERR|_LOG_ONCE);
-
-	if (_abort_on_internal_errors &&
-	    !strncmp(format, INTERNAL_ERROR,
-		     strlen(INTERNAL_ERROR))) {
-		fatal_internal_error = 1;
-		/* Internal errors triggering abort cannot be suppressed. */
-		_log_suppress = 0;
-		level = _LOG_FATAL;
-	}
-
-	if (_log_suppress == 2)
-		return;
-
-	if (level <= _LOG_ERR)
-		init_error_message_produced(1);
-
-	trformat = _(format);
-
-	if (dm_errno && !_lvm_errno)
-		_lvm_errno = dm_errno;
-
-	if (_lvm2_log_fn ||
-	    (_store_errmsg && (level <= _LOG_ERR)) ||
-	    log_once) {
-		va_start(ap, format);
-		n = vsnprintf(buf2, sizeof(buf2) - 1, trformat, ap);
-		va_end(ap);
-
-		if (n < 0) {
-			fprintf(stderr, _("vsnprintf failed: skipping external "
-					"logging function"));
-			goto log_it;
-		}
-
-		buf2[sizeof(buf2) - 1] = '\0';
-		message = &buf2[0];
-	}
-
-	if (_store_errmsg && (level <= _LOG_ERR)) {
-		if (!_lvm_errmsg)
-			_lvm_errmsg = dm_strdup(message);
-		else if ((newbuf = dm_realloc(_lvm_errmsg,
- 					      strlen(_lvm_errmsg) +
-					      strlen(message) + 2))) {
-			_lvm_errmsg = strcat(newbuf, "\n");
-			_lvm_errmsg = strcat(newbuf, message);
-		}
-	}
-
-	if (log_once) {
-		if (!_duplicated)
-			_duplicated = dm_hash_create(128);
-		if (_duplicated) {
-			if (dm_hash_lookup(_duplicated, message))
-				level = _LOG_NOTICE;
-			dm_hash_insert(_duplicated, message, (void*)1);
-		}
-	}
-
-	if (_lvm2_log_fn) {
-		_lvm2_log_fn(level, file, line, 0, message);
-		if (fatal_internal_error)
-			abort();
-		return;
-	}
-
-      log_it:
-	if (!_log_suppress) {
-		if (verbose_level() > _LOG_DEBUG)
-			dm_snprintf(locn, sizeof(locn), "#%s:%d ",
-				     file, line);
-		else
-			locn[0] = '\0';
-
-		va_start(ap, format);
-		switch (level) {
-		case _LOG_DEBUG:
-			if (!strcmp("<backtrace>", format) &&
-			    verbose_level() <= _LOG_DEBUG)
-				break;
-			if (verbose_level() >= _LOG_DEBUG) {
-				fprintf(stderr, "%s%s%s", locn, log_command_name(),
-					_msg_prefix);
-				if (_indent)
-					fprintf(stderr, "      ");
-				vfprintf(stderr, trformat, ap);
-				fputc('\n', stderr);
-			}
-			break;
-
-		case _LOG_INFO:
-			if (verbose_level() >= _LOG_INFO) {
-				fprintf(stderr, "%s%s%s", locn, log_command_name(),
-					_msg_prefix);
-				if (_indent)
-					fprintf(stderr, "    ");
-				vfprintf(stderr, trformat, ap);
-				fputc('\n', stderr);
-			}
-			break;
-		case _LOG_NOTICE:
-			if (verbose_level() >= _LOG_NOTICE) {
-				fprintf(stderr, "%s%s%s", locn, log_command_name(),
-					_msg_prefix);
-				if (_indent)
-					fprintf(stderr, "  ");
-				vfprintf(stderr, trformat, ap);
-				fputc('\n', stderr);
-			}
-			break;
-		case _LOG_WARN:
-			if (verbose_level() >= _LOG_WARN) {
-				fprintf(use_stderr ? stderr : stdout, "%s%s",
-					log_command_name(), _msg_prefix);
-				vfprintf(use_stderr ? stderr : stdout, trformat, ap);
-				fputc('\n', use_stderr ? stderr : stdout);
-			}
-			break;
-		case _LOG_ERR:
-			if (verbose_level() >= _LOG_ERR) {
-				fprintf(stderr, "%s%s%s", locn, log_command_name(),
-					_msg_prefix);
-				vfprintf(stderr, trformat, ap);
-				fputc('\n', stderr);
-			}
-			break;
-		case _LOG_FATAL:
-		default:
-			if (verbose_level() >= _LOG_FATAL) {
-				fprintf(stderr, "%s%s%s", locn, log_command_name(),
-					_msg_prefix);
-				vfprintf(stderr, trformat, ap);
-				fputc('\n', stderr);
-			}
-			break;
-		}
-		va_end(ap);
-	}
-
-	if (fatal_internal_error)
-		abort();
-
-	if (level > debug_level())
-		return;
-
-	if (_log_to_file && (_log_while_suspended || !memlock())) {
-		fprintf(_log_file, "%s:%d %s%s", file, line, log_command_name(),
-			_msg_prefix);
-
-		va_start(ap, format);
-		vfprintf(_log_file, trformat, ap);
-		va_end(ap);
-
-		fprintf(_log_file, "\n");
-		fflush(_log_file);
-	}
-
-	if (_syslog && (_log_while_suspended || !memlock())) {
-		va_start(ap, format);
-		vsyslog(level, trformat, ap);
-		va_end(ap);
-	}
-
-	/* FIXME This code is unfinished - pre-extend & condense. */
-	if (!_already_logging && _log_direct && memlock()) {
-		_already_logging = 1;
-		memset(&buf, ' ', sizeof(buf));
-		bufused = 0;
-		if ((n = dm_snprintf(buf, sizeof(buf) - bufused - 1,
-				      "%s:%d %s%s", file, line, log_command_name(),
-				      _msg_prefix)) == -1)
-			goto done;
-
-		bufused += n;
-
-		va_start(ap, format);
-		n = vsnprintf(buf + bufused - 1, sizeof(buf) - bufused - 1,
-			      trformat, ap);
-		va_end(ap);
-		bufused += n;
-
-	      done:
-		buf[bufused - 1] = '\n';
-		buf[bufused] = '\n';
-		buf[sizeof(buf) - 1] = '\n';
-		/* FIXME real size bufused */
-		dev_append(&_log_dev, sizeof(buf), buf);
-		_already_logging = 0;
-	}
-#endif
-}
+/*----------------------------------------------------------------*/

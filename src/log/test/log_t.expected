@@ -1,0 +1,5 @@
+DEBUG src/log/test/log_t.c:7 hello, world!
+INFO sldfkjsl
+WARN lskdjfls
+EVENT [SERVER_STARTED] lskdfjs
+ERROR lsdkfjls

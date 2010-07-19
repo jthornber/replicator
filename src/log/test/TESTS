@@ -1,0 +1,1 @@
+log test:$TEST_TOOL ./log_t && diff -q log_t.expected log.log
