@@ -24,14 +24,31 @@ struct io_detail {
         opaque data<>;
 };
 
+typedef hyper transaction_id;
+
+struct drop_detail {
+        transaction_id t;
+};
+
+struct merge_detail {
+        transaction_id t;
+};
+
 enum command_type {
         LOGON,
 
         JOURNAL_OPEN,
         JOURNAL_CLOSE,
+
+        JOURNAL_FIRST_TRANSACTION,
+        JOURNAL_LAST_TRANSACTION,
+
         JOURNAL_IO,
         JOURNAL_COMMIT,
-        JOURNAL_ROLLBACK
+        JOURNAL_ROLLBACK,
+        JOURNAL_DROP,
+
+        MERGE
 };
 
 union command switch (command_type discriminator) {
@@ -48,6 +65,12 @@ case JOURNAL_OPEN:
 case JOURNAL_CLOSE:
         void;
 
+case JOURNAL_FIRST_TRANSACTION:
+        void;
+
+case JOURNAL_LAST_TRANSACTION:
+        void;
+
 case JOURNAL_IO:
         io_detail io;
 
@@ -56,6 +79,12 @@ case JOURNAL_COMMIT:
 
 case JOURNAL_ROLLBACK:
         void;
+
+case JOURNAL_DROP:
+        drop_detail drop;
+
+case MERGE:
+        merge_detail merge;
 };
 
 /*
@@ -72,7 +101,8 @@ struct msg_header {
 
 enum response_code {
         SUCCESS,
-        FAIL
+        FAIL,
+        TRANSACTION_RESPONSE
 };
 
 union response switch (response_code discriminator) {
@@ -81,5 +111,13 @@ case SUCCESS:
 
 case FAIL:
         string reason<>;
+
+/* implicit success, but also returns a transaction id.  Used by
+   JOURNAL_FIRST_TRANSACTION,
+   JOURNAL_LAST_TRANSACTION,
+   JOURNAL_COMMIT,
+*/
+case TRANSACTION_RESPONSE:
+        hyper transaction_id;
 };
 
