@@ -19,7 +19,8 @@ UNITS=\
 	mm \
 	xdr \
 	csp \
-	utility
+	utility \
+	snapshots
 
 LINK_INCLUDES:=$(shell scripts/mk_links $(UNITS))
 
@@ -48,6 +49,9 @@ LIB_OBJECTS+=\
 	$(XDR_DIR)/xdr.o
 
 include src/xdr/test/Makefile
+
+# snapshot
+include src/snapshots/src/Makefile
 
 # replicator
 REP_DIR=src/replicator/src
