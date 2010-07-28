@@ -52,6 +52,7 @@ include src/xdr/test/Makefile
 
 # snapshot
 include src/snapshots/src/Makefile
+include src/snapshots/test/Makefile
 
 # replicator
 REP_DIR=src/replicator/src
