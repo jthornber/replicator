@@ -3,23 +3,36 @@
 
 /*----------------------------------------------------------------*/
 
+/*
+ * The block allocator manages provides a transactional interface to
+ * the underlying device.  It does this by maintaining a mapping between
+ * physical blocks, and logical blocks.
+ */
 struct block_allocator;
 
-struct block_allocator *block_allocator_create(dev_t dev, uint32_t block_size);
-void block_allocator_destroy(struct block_allocator *ba);
+/* Separate structure so the type-checker can distinguish between physical and logical blocks */
+struct logical_block {
+	uint64_t block;
+};
 
-int block_allocator_begin(struct block_allocator *ba);
+struct block_allocator *ba_create(dev_t dev, uint32_t block_size);
+void ba_destroy(struct block_allocator *ba);
 
-int block_allocator_new_block(struct block_allocator *ba, block_t *result);
+int ba_commit(struct block_allocator *ba);
+int ba_rollback(struct block_allocator *ba);
+int ba_begin(struct block_allocator *ba);
+
+int ba_allocate(struct block_allocator *ba, struct logical_block *result);
 
 /*
- * Often we just want to make a small tweak to the data in a block.
- * Because we're using persistent data structures we have to allocate a new block, copy the data including the 
-
-
-int block_allocator_mutate_block(struct block_allocator *ba, block_t old_block);
-
-int commit_transaction();
+ * Try and write only the actual data that has changed, this gives the allocator
+ * more freedom when it comes to optimising the commit.  eg, it may just
+ * journal the delta rather than doing a copy and update of the block.
+ */
+int ba_write(struct block_allocator *ba, struct logical_block b,
+             size_t offset, size_t len, const void *data);
+int ba_read(struct block_allocator *ba, struct logical_block b,
+      	    size_t offset, size_t len, void *data);
 
 /*----------------------------------------------------------------*/
 
