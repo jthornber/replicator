@@ -3,6 +3,7 @@
 #include "datastruct/list.h"
 #include "mm/pool.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 
 /* FIXME: throw away implementation for now.  Look at Mikulas' radix trees */
@@ -62,6 +63,11 @@ int sm_inc_block(struct space_map *sm, block_t b)
 int sm_dec_block(struct space_map *sm, block_t b)
 {
 	return 0;
+}
+
+void sm_dump(struct space_map *sm)
+{
+	printf("space map: %u allocations\n", (unsigned) sm->last_allocated);
 }
 
 /*----------------------------------------------------------------*/

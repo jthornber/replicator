@@ -2,6 +2,7 @@
 
 #include "datastruct/list.h"
 
+#include <stdio.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -44,6 +45,9 @@ struct block_manager {
 	size_t block_size;
 	block_t nr_blocks;
 
+	unsigned read_count;
+	unsigned write_count;
+
 	struct list blocks;
 };
 
@@ -71,6 +75,16 @@ void block_manager_destroy(struct block_manager *bm)
 	free(bm);
 }
 
+size_t bm_block_size(struct block_manager *bm)
+{
+	return bm->block_size;
+}
+
+block_t bm_nr_blocks(struct block_manager *bm)
+{
+	return bm->nr_blocks;
+}
+
 int block_lock(struct block_manager *bm, block_t block, enum block_lock how, void **data)
 {
 	struct block *b = alloc_block(bm->block_size);
@@ -82,6 +96,7 @@ int block_lock(struct block_manager *bm, block_t block, enum block_lock how, voi
 		return 0;
 	}
 
+	bm->read_count++;
 	if (read(bm->fd, b->data, bm->block_size) < 0) {
 		free_block(b);
 		return 0;
@@ -105,6 +120,7 @@ int block_unlock(struct block_manager *bm, block_t block, int changed)
 				if (b->type != WRITE)
 					return 0;
 
+				bm->write_count++;
 				if ((lseek(bm->fd, block * bm->block_size, SEEK_SET) < 0) ||
 				    (write(bm->fd, b->data, bm->block_size) < 0))
 					return 0;
@@ -116,6 +132,12 @@ int block_unlock(struct block_manager *bm, block_t block, int changed)
 	}
 
 	return 0;
+}
+
+void bm_dump(struct block_manager *bm)
+{
+	printf("Block manager: %u reads, %u writes\n",
+	       bm->read_count, bm->write_count);
 }
 
 /*----------------------------------------------------------------*/
