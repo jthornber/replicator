@@ -1,73 +1,101 @@
 #include "snapshots/space_map.h"
 
 #include "datastruct/list.h"
-#include "mm/pool.h"
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* FIXME: throw away implementation for now.  Look at Mikulas' radix trees */
 
 /*----------------------------------------------------------------*/
 
-struct block_detail {
-	struct list list;
-	block_t block;
-	uint64_t reference_count;
-};
-
 struct space_map {
-	struct pool *mem;
 	block_t nr_blocks;
 	block_t last_allocated;
-	struct list blocks;
+	uint32_t *ref_count;
 };
 
 struct space_map *space_map_create(block_t nr_blocks)
 {
-	struct pool *mem = pool_create("", 1024);
-	struct space_map *sm = pool_alloc(mem, sizeof(*sm));
+	size_t len;
+	struct space_map *sm = malloc(sizeof(*sm));
 
-	if (!sm) {
-		pool_destroy(mem);
+	if (!sm)
+		return NULL;
+
+	sm->nr_blocks = nr_blocks;
+	sm->last_allocated = 1;	/* You can't allocate block 0 */
+
+	len = sizeof(*sm->ref_count) * nr_blocks;
+	sm->ref_count = malloc(len);
+	if (!sm->ref_count) {
+		free(sm);
 		return NULL;
 	}
+	memset(sm->ref_count, 0, len);
 
-	sm->mem = mem;
-	sm->nr_blocks = nr_blocks;
-	sm->last_allocated = 0;
-	list_init(&sm->blocks);
 	return sm;
 }
 
 void space_map_destroy(struct space_map *sm)
 {
-	pool_destroy(sm->mem);
+	free(sm->ref_count);
+	free(sm);
 }
 
 int sm_new_block(struct space_map *sm, block_t *b)
 {
-	if (sm->last_allocated == sm->nr_blocks - 1)
-		/* out of space */
-		return 0;
+	uint32_t i;
 
-	*b = ++sm->last_allocated;
-	return 1;
+	/* FIXME: duplicate code in these loops */
+	for (i = sm->last_allocated; i < sm->nr_blocks; i++)
+		if (sm->ref_count[i] == 0) {
+			sm->ref_count[i] = 1;
+			*b = sm->last_allocated = i;
+			return 1;
+		}
+
+	for (i = 1; i < sm->last_allocated; i++)
+		if (sm->ref_count[i] == 0) {
+			sm->ref_count[i] = 1;
+			*b = sm->last_allocated = i;
+			return 1;
+		}
+
+	return 0;
 }
 
 int sm_inc_block(struct space_map *sm, block_t b)
 {
-	return 0;
+	sm->ref_count[b]++;
+	return 1;
 }
 
 int sm_dec_block(struct space_map *sm, block_t b)
 {
-	return 0;
+	assert(sm->ref_count[b]);
+	sm->ref_count[b]--;
+	return 1;
 }
 
 void sm_dump(struct space_map *sm)
 {
-	printf("space map: %u allocations\n", (unsigned) sm->last_allocated);
+	size_t len = sm->nr_blocks * sizeof(uint32_t);
+	uint32_t *bins = malloc(len), i;
+
+	assert(bins);
+
+	memset(bins, 0, len);
+	for (i = 0; i < sm->nr_blocks; i++)
+		bins[sm->ref_count[i]]++;
+
+
+	printf("space map reference count counts:\n");
+	for (i = 0; i < sm->nr_blocks; i++)
+		if (bins[i])
+			printf("    %u: %u\n", i, bins[i]);
 }
 
 /*----------------------------------------------------------------*/
