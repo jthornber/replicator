@@ -85,7 +85,7 @@ block_t bm_nr_blocks(struct block_manager *bm)
 	return bm->nr_blocks;
 }
 
-int block_lock(struct block_manager *bm, block_t block, enum block_lock how, void **data)
+int bm_lock(struct block_manager *bm, block_t block, enum block_lock how, void **data)
 {
 	struct block *b = alloc_block(bm->block_size);
 	if (!b)
@@ -110,7 +110,7 @@ int block_lock(struct block_manager *bm, block_t block, enum block_lock how, voi
 	return 1;
 }
 
-int block_unlock(struct block_manager *bm, block_t block, int changed)
+int bm_unlock(struct block_manager *bm, block_t block, int changed)
 {
 	struct block *b, *tmp;
 
@@ -132,6 +132,11 @@ int block_unlock(struct block_manager *bm, block_t block, int changed)
 	}
 
 	return 0;
+}
+
+int bm_flush(struct block_manager *bm)
+{
+	return 1;
 }
 
 void bm_dump(struct block_manager *bm)

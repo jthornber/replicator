@@ -20,8 +20,9 @@ enum block_lock {
 	WRITE
 };
 
-int block_lock(struct block_manager *bm, block_t b, enum block_lock how, void **data);
-int block_unlock(struct block_manager *bm, block_t b, int changed);
+int bm_lock(struct block_manager *bm, block_t b, enum block_lock how, void **data);
+int bm_unlock(struct block_manager *bm, block_t b, int changed);
+int bm_flush(struct block_manager *bm);
 
 /* Dumps some statistics to stdout */
 void bm_dump(struct block_manager *bm);

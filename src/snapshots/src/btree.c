@@ -75,15 +75,15 @@ static int shadow_node_new(struct btree *bt, block_t original, block_t *new, str
 	if (!sm_new_block(bt->sm, &shadow))
 		return 0;
 
-	if (!block_lock(bt->bm, shadow, WRITE, (void **) &shadow_node))
+	if (!bm_lock(bt->bm, shadow, WRITE, (void **) &shadow_node))
 		sm_dec_block(bt->sm, shadow);
 
-	if (!block_lock(bt->bm, original, READ, (void **) &original_node)) {
+	if (!bm_lock(bt->bm, original, READ, (void **) &original_node)) {
 		/* FIXME: stuff */
 	}
 
 	memcpy(shadow_node, original_node, BLOCK_SIZE);
-	if (!block_unlock(bt->bm, original, 0)) {
+	if (!bm_unlock(bt->bm, original, 0)) {
 		/* FIXME: stuff */
 	}
 
@@ -116,7 +116,7 @@ static int new_block(struct btree *bt, block_t *result, struct node **node)
 	if (!sm_new_block(bt->sm, result))
 		barf("sm_new_block");
 
-	if (!block_lock(bt->bm, *result, WRITE, (void **) node))
+	if (!bm_lock(bt->bm, *result, WRITE, (void **) node))
 		barf("block_lock");
 
 	return insert_shadow(bt, *result, *node);
@@ -128,7 +128,7 @@ static inline void block_unlock_safe(struct block_manager *bm,
 				     block_t b, int dirty)
 {
 	if (b)
-		block_unlock(bm, b, dirty);
+		bm_unlock(bm, b, dirty);
 }
 
 static int init_leaf(struct btree *bt, block_t *b)
@@ -203,7 +203,7 @@ int btree_commit(struct btree *bt)
 
 	/* run through the shadow map committing everything */
 	list_iterate_items (sh, &t->shadowed_blocks)
-		block_unlock(bt->bm, sh->block, 1);
+		bm_unlock(bt->bm, sh->block, 1);
 
 	/* swap in the root */
 	bt->root = t->new_root;
@@ -244,7 +244,7 @@ int btree_lookup(struct btree *bt, uint64_t key,
         struct node *node;
 
 	do {
-		if (!block_lock(bt->bm, node_block, READ, (void **) &node)) {
+		if (!bm_lock(bt->bm, node_block, READ, (void **) &node)) {
 			block_unlock_safe(bt->bm, parent_block, 0);
 			return -1;
 		}
@@ -258,7 +258,7 @@ int btree_lookup(struct btree *bt, uint64_t key,
 
 	*key_result = node->keys[i];
 	*result = node->values[i];
-	block_unlock(bt->bm, node_block, 0);
+	bm_unlock(bt->bm, node_block, 0);
 
 	return 1;
 }
