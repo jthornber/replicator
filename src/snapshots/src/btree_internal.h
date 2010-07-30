@@ -39,7 +39,6 @@ struct transaction {
         struct btree *bt;
         struct list shadowed_blocks;
         struct list free_blocks;
-	block_t new_root;
 };
 
 struct shadowed_block {
@@ -64,8 +63,6 @@ struct btree {
 	struct block_manager *bm;
 	struct transaction *transaction;
 	struct space_map *sm;
-
-	block_t root;
 };
 
 

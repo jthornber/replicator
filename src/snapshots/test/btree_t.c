@@ -54,15 +54,48 @@ static void check_insert(struct btree *bt)
 {
 	uint64_t key, value;
 	struct number_list *nl;
+	block_t root = 0;
 
 	btree_begin(bt);
+	if (!btree_new(bt, &root))
+		abort();
+
 	list_iterate_items (nl, &randoms_)
-		if (!btree_insert(bt, nl->key, nl->value))
+		if (!btree_insert(bt, nl->key, nl->value, root, &root))
 			barf("insert");
 	btree_commit(bt);
 
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_lookup(bt, nl->key, &key, &value))
+		if (!btree_lookup(bt, nl->key, root, &key, &value))
+			barf("lookup");
+
+		assert(key == nl->key);
+		assert(value == nl->value);
+	}
+}
+
+static void check_clone(struct btree *bt)
+{
+	uint64_t key, value;
+	struct number_list *nl;
+	block_t root, clone;
+
+	btree_begin(bt);
+
+	if (!btree_new(bt, &root))
+		abort();
+
+	list_iterate_items (nl, &randoms_)
+		if (!btree_insert(bt, nl->key, nl->value, root, &root))
+			barf("insert");
+
+	btree_clone(bt, root, &clone);
+	assert(clone);
+
+	btree_commit(bt);
+
+	list_iterate_items (nl, &randoms_) {
+		if (!btree_lookup(bt, nl->key, root, &key, &value))
 			barf("lookup");
 
 		assert(key == nl->key);
@@ -87,16 +120,31 @@ static int open_file()
 
 int main(int argc, char **argv)
 {
-	struct block_manager *bm = block_manager_create(open_file(), BLOCK_SIZE, NR_BLOCKS);
-	struct btree *bt = btree_create(bm);
+	static struct {
+		const char *name;
+		void (*fn)(struct btree *);
+	} table_[] = {
+		{ "check_insert", check_insert },
+		{ "check_clone", check_clone }
+	};
+
+	int i;
+	struct block_manager *bm;
+	struct btree *bt;
 
 	populate_randoms(10000);
-	btree_dump(bt);
-	printf("running check_insert()\n");
-	check_insert(bt);
-	btree_dump(bt);
-	btree_destroy(bt);
-	block_manager_destroy(bm);
+	for (i = 0; i < sizeof(table_) / sizeof(*table_); i++) {
+		printf("running %s()\n", table_[i].name);
+
+		bm = block_manager_create(open_file(), BLOCK_SIZE, NR_BLOCKS);
+		bt = btree_create(bm);
+
+		table_[i].fn(bt);
+
+		btree_dump(bt);
+		btree_destroy(bt);
+		block_manager_destroy(bm);
+	}
 	free_randoms(50);
 
 	return 0;

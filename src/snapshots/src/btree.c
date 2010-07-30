@@ -162,10 +162,6 @@ struct btree *btree_create(struct block_manager *bm)
 		return NULL;
 	}
 
-	btree_begin(bt);
-	init_leaf(bt, &bt->transaction->new_root);
-	btree_commit(bt);
-
 	return bt;
 }
 
@@ -190,7 +186,6 @@ int btree_begin(struct btree *bt)
 	t->bt = bt;
 	list_init(&t->shadowed_blocks);
 	list_init(&t->free_blocks);
-	t->new_root = bt->root;
 
 	bt->transaction = t;
 	return 1;
@@ -204,12 +199,6 @@ int btree_commit(struct btree *bt)
 	/* run through the shadow map committing everything */
 	list_iterate_items (sh, &t->shadowed_blocks)
 		bm_unlock(bt->bm, sh->block, 1);
-
-	/* swap in the root */
-	bt->root = t->new_root;
-
-	/* decrement the old root */
-	/* FIXME: finish */
 
 	/* destroy the transaction */
 	pool_destroy(bt->transaction->mem);
@@ -225,6 +214,12 @@ int btree_rollback(struct btree *bt)
 
 /*----------------------------------------------------------------*/
 
+int btree_new(struct btree *bt, block_t *new_node)
+{
+	init_leaf(bt, new_node);
+	return 1;
+}
+
 int lower_bound(struct node *n, uint64_t key)
 {
 	/* FIXME: use a binary search */
@@ -236,11 +231,11 @@ int lower_bound(struct node *n, uint64_t key)
 	return i - 1;
 }
 
-int btree_lookup(struct btree *bt, uint64_t key,
+int btree_lookup(struct btree *bt, uint64_t key, block_t root,
 		 uint64_t *key_result, uint64_t *result)
 {
         int i;
-        block_t node_block = bt->root, parent_block = 0;
+        block_t node_block = root, parent_block = 0;
         struct node *node;
 
 	do {
@@ -340,14 +335,14 @@ static int btree_split(struct btree *bt, block_t block, struct node *node,
 	return 1;
 }
 
-int btree_insert(struct btree *bt, uint64_t key, uint64_t value)
+int btree_insert(struct btree *bt, uint64_t key, uint64_t value,
+		 block_t root, block_t *new_root)
 {
         int i, parent_index = 0;
         struct node *node, *parent_node = NULL;
-	block_t *block, parent_block, new_root = 0, tmp_block;
+	block_t *block, parent_block, new_root_ = 0, tmp_block;
 
-	assert(bt->transaction->new_root);
-	block = &bt->transaction->new_root;
+	block = &root;
 
 	for (;;) {
 		if (!shadow_node(bt, *block, block, &node)) {
@@ -377,8 +372,8 @@ int btree_insert(struct btree *bt, uint64_t key, uint64_t value)
 			i = 0;
 		}
 
-		if (!new_root)
-			new_root = *block;
+		if (!new_root_)
+			new_root_ = *block;
 
 		parent_index = i;
 		parent_block = *block;
@@ -410,10 +405,25 @@ int btree_insert(struct btree *bt, uint64_t key, uint64_t value)
 		node->values[i] = value;
 	}
 	node->header.nr_entries++;
-
-	if (new_root)
-		bt->transaction->new_root = new_root;
+	if (new_root_)
+		*new_root = new_root_;
 	check_keys(*block, node);
+
+	return 1;
+}
+
+int btree_clone(struct btree *bt, block_t root, block_t *clone)
+{
+	unsigned i;
+	struct node *new_root;
+
+	/* Copy the root node */
+	if (!shadow_node(bt, root, clone, &new_root))
+		return 0;
+
+	/* Increment the reference count on all the children */
+	for (i = 0; i < new_root->header.nr_entries; i++)
+		sm_inc_block(bt->sm, new_root->values[i]);
 
 	return 1;
 }

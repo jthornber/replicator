@@ -7,19 +7,22 @@
 
 struct btree;
 
+/* FIXME: move the next few functions to transaction manager */
 struct btree *btree_create(struct block_manager *bm);
 void btree_destroy(struct btree *bt);
 
 int btree_begin(struct btree *bt);
 int btree_commit(struct btree *bt);
 int btree_rollback(struct btree *bt);
+void btree_dump(struct btree *bt);
 
-int btree_lookup(struct btree *bt, uint64_t key,
+/* FIXME: these can stay */
+int btree_new(struct btree *bt, block_t *new_root);
+int btree_lookup(struct btree *bt, uint64_t key, block_t root,
 		 uint64_t *result_key, uint64_t *result_value);
 
-int btree_insert(struct btree *bt, uint64_t key, uint64_t value);
-
-void btree_dump(struct btree *bt);
+int btree_insert(struct btree *bt, uint64_t key, uint64_t value, block_t root, block_t *new_root);
+int btree_clone(struct btree *bt, block_t root, block_t *clone);
 
 /*----------------------------------------------------------------*/
 
