@@ -37,106 +37,11 @@ static void check_keys(block_t b, struct node *n)
 
 /*----------------------------------------------------------------*/
 
-/* shadowing */
-
-static int insert_shadow(struct btree *bt, block_t b, struct node *data)
-{
-	struct shadowed_block *tb = pool_alloc(bt->transaction->mem, sizeof(*tb));
-	if (!tb) {
-		/* FIXME: stuff */
-		return 0;
-	}
-
-	tb->block = b;
-	tb->data = data;
-	list_add(&bt->transaction->shadowed_blocks, &tb->list);
-	return 1;
-}
-
-/*
- * If this block hasn't already been shadowed in this transaction then:
- *
- * - allocate a new block from the in-core free space manager
- * - grab it with a write lock from the block manager
- * - grab a read lock on the original block
- * - copy the data from the original block to the new one
- * - store a record of this shadowing
- *
- * If it has already been shadowed then just return the previous shadowing.
- *
- * The transaction commit is responsible for unlocking shadowed pages.
- * FIXME: ???, who unlocks read locks then ?
- */
-static int shadow_node_new(struct btree *bt, block_t original, block_t *new, struct node **data)
-{
-	block_t shadow;
-	struct node *original_node, *shadow_node;
-
-	if (!sm_new_block(bt->sm, &shadow))
-		return 0;
-
-	if (!bm_lock(bt->bm, shadow, WRITE, (void **) &shadow_node))
-		sm_dec_block(bt->sm, shadow);
-
-	if (!bm_lock(bt->bm, original, READ, (void **) &original_node)) {
-		/* FIXME: stuff */
-	}
-
-	memcpy(shadow_node, original_node, BLOCK_SIZE);
-	if (!bm_unlock(bt->bm, original, 0)) {
-		/* FIXME: stuff */
-	}
-
-	insert_shadow(bt, shadow, shadow_node);
-	*new = shadow;
-	*data = shadow_node;
-	return 1;
-}
-
-static int shadow_node(struct btree *bt, block_t original, block_t *new, struct node **data)
-{
-	struct shadowed_block *sb;
-
-	list_iterate_items (sb, &bt->transaction->shadowed_blocks)
-		if (sb->block == original) {
-			*new = original;
-			*data = sb->data;
-			return 1;
-		}
-
-	return shadow_node_new(bt, original, new, data);
-}
-
-/*
- * Like sm_new_block() except it inserts the block into the transactions
- * shadow list.
- */
-static int new_block(struct btree *bt, block_t *result, struct node **node)
-{
-	if (!sm_new_block(bt->sm, result))
-		barf("sm_new_block");
-
-	if (!bm_lock(bt->bm, *result, WRITE, (void **) node))
-		barf("block_lock");
-
-	return insert_shadow(bt, *result, *node);
-}
-
-/*----------------------------------------------------------------*/
-
-static inline void block_unlock_safe(struct block_manager *bm,
-				     block_t b, int dirty)
-{
-	if (b)
-		bm_unlock(bm, b, dirty);
-}
-
-static int init_leaf(struct btree *bt, block_t *b)
+int btree_empty(struct transaction_manager *tm, block_t *root)
 {
 	struct node *node;
 
-	/* Set up an empty tree */
-	if (!new_block(bt, b, &node)) {
+	if (!tm_new_block(tm, root, (void **) &node)) {
 		/* FIXME: finish */
 		return 0;
 	}
@@ -145,82 +50,12 @@ static int init_leaf(struct btree *bt, block_t *b)
 	node->header.flags = LEAF_NODE;
 	node->header.nr_entries = 0;
 
-	return 1;
-}
-
-struct btree *btree_create(struct block_manager *bm)
-{
-	struct btree *bt = malloc(sizeof(*bt));
-	if (!bt)
-		return NULL;
-
-	bt->bm = bm;
-	bt->transaction = NULL;
-	bt->sm = space_map_create(bm_nr_blocks(bm));
-	if (!bt->sm) {
-		free(bt);
-		return NULL;
-	}
-
-	return bt;
-}
-
-void btree_destroy(struct btree *bt)
-{
-	space_map_destroy(bt->sm);
-	free(bt);
-}
-
-int btree_begin(struct btree *bt)
-{
-	struct pool *mem;
-	struct transaction *t;
-
-	if (!(mem = pool_create("", 1024)))
-		barf("pool_create");
-
-	if (!(t = pool_alloc(mem, sizeof(*t))))
-		barf("pool_alloc");
-
-	t->mem = mem;
-	t->bt = bt;
-	list_init(&t->shadowed_blocks);
-	list_init(&t->free_blocks);
-
-	bt->transaction = t;
-	return 1;
-}
-
-int btree_commit(struct btree *bt)
-{
-	struct transaction *t = bt->transaction;
-	struct shadowed_block *sh;
-
-	/* run through the shadow map committing everything */
-	list_iterate_items (sh, &t->shadowed_blocks)
-		bm_unlock(bt->bm, sh->block, 1);
-
-	/* destroy the transaction */
-	pool_destroy(bt->transaction->mem);
+	tm_write_unlock(tm, *root);
 
 	return 1;
 }
 
-int btree_rollback(struct btree *bt)
-{
-	/* FIXME: finish */
-	return 0;
-}
-
-/*----------------------------------------------------------------*/
-
-int btree_new(struct btree *bt, block_t *new_node)
-{
-	init_leaf(bt, new_node);
-	return 1;
-}
-
-int lower_bound(struct node *n, uint64_t key)
+static int lower_bound(struct node *n, uint64_t key)
 {
 	/* FIXME: use a binary search */
 	int i;
@@ -231,7 +66,7 @@ int lower_bound(struct node *n, uint64_t key)
 	return i - 1;
 }
 
-int btree_lookup(struct btree *bt, uint64_t key, block_t root,
+int btree_lookup(struct transaction_manager *tm, uint64_t key, block_t root,
 		 uint64_t *key_result, uint64_t *result)
 {
         int i;
@@ -239,12 +74,15 @@ int btree_lookup(struct btree *bt, uint64_t key, block_t root,
         struct node *node;
 
 	do {
-		if (!bm_lock(bt->bm, node_block, READ, (void **) &node)) {
-			block_unlock_safe(bt->bm, parent_block, 0);
+		if (!tm_read_lock(tm, node_block, (void **) &node)) {
+			if (parent_block)
+				tm_read_unlock(tm, parent_block);
 			return -1;
 		}
 
-		block_unlock_safe(bt->bm, parent_block, 0);
+		if (parent_block)
+			tm_read_unlock(tm, parent_block);
+
 		i = lower_bound(node, key);
 		assert(i >= 0);
 		node_block = node->values[i];
@@ -253,7 +91,7 @@ int btree_lookup(struct btree *bt, uint64_t key, block_t root,
 
 	*key_result = node->keys[i];
 	*result = node->values[i];
-	bm_unlock(bt->bm, node_block, 0);
+	tm_read_unlock(tm, node_block);
 
 	return 1;
 }
@@ -266,7 +104,7 @@ int btree_lookup(struct btree *bt, uint64_t key, block_t root,
  * yet incrementing them as part of the shadowing either.  So leave for
  * now.
  */
-static int btree_split(struct btree *bt, block_t block, struct node *node,
+static int btree_split(struct transaction_manager *tm, block_t block, struct node *node,
 		       block_t parent_block, struct node *parent_node, unsigned parent_index,
 		       block_t *result, struct node **result_node)
 {
@@ -274,10 +112,10 @@ static int btree_split(struct btree *bt, block_t block, struct node *node,
 	block_t left_block, right_block;
 	struct node *left, *right;
 
-	if (!new_block(bt, &left_block, &left))
+	if (!tm_new_block(tm, &left_block, (void **) &left))
 		abort();
 
-	if (!new_block(bt, &right_block, &right))
+	if (!tm_new_block(tm, &right_block, (void **) &right))
 		abort();
 
 	nr_left = node->header.nr_entries / 2;
@@ -317,7 +155,7 @@ static int btree_split(struct btree *bt, block_t block, struct node *node,
 		/* we need to create a new parent */
 		block_t nb;
 		struct node *nn;
-		if (!new_block(bt, &nb, &nn))
+		if (!tm_new_block(tm, &nb, (void **) &nn))
 			barf("new node");
 
 		nn->header.flags = INTERNAL_NODE;
@@ -332,20 +170,24 @@ static int btree_split(struct btree *bt, block_t block, struct node *node,
 		*result_node = nn;
 	}
 
+	tm_write_unlock(tm, left_block);
+	tm_write_unlock(tm, right_block);
+
 	return 1;
 }
 
-int btree_insert(struct btree *bt, uint64_t key, uint64_t value,
+int btree_insert(struct transaction_manager *tm, uint64_t key, uint64_t value,
 		 block_t root, block_t *new_root)
 {
         int i, parent_index = 0;
         struct node *node, *parent_node = NULL;
-	block_t *block, parent_block, new_root_ = 0, tmp_block;
+	block_t *block, parent_block = 0, new_root_ = 0, tmp_block;
 
+	*new_root = root;	/* The root block may already be a shadow */
 	block = &root;
 
 	for (;;) {
-		if (!shadow_node(bt, *block, block, &node)) {
+		if (!tm_shadow_block(tm, *block, block, (void **) &node)) {
 			assert(0);
 			/* FIXME: handle */
 		}
@@ -354,12 +196,15 @@ int btree_insert(struct btree *bt, uint64_t key, uint64_t value,
 			/* FIXME: horrible hack */
 			tmp_block = *block;
 			block = &tmp_block;
-			if (!btree_split(bt, *block, node,
+			if (!btree_split(tm, *block, node,
 					 parent_block, parent_node, parent_index,
 					 block, &node))
 				/* FIXME: handle this */
 				assert(0);
 		}
+
+		if (parent_block && parent_block != *block) /* FIXME: hack */
+			tm_write_unlock(tm, parent_block);
 
 		i = lower_bound(node, key);
 
@@ -407,90 +252,32 @@ int btree_insert(struct btree *bt, uint64_t key, uint64_t value,
 	node->header.nr_entries++;
 	if (new_root_)
 		*new_root = new_root_;
+
 	check_keys(*block, node);
+	tm_write_unlock(tm, *block);
 
 	return 1;
 }
 
-int btree_clone(struct btree *bt, block_t root, block_t *clone)
+int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone)
 {
 	unsigned i;
-	struct node *new_root;
+	struct node *clone_node, *orig_node;
 
 	/* Copy the root node */
-	if (!shadow_node(bt, root, clone, &new_root))
+	if (!tm_new_block(tm, clone, (void **) &clone_node))
 		return 0;
 
+	if (!tm_read_lock(tm, root, (void **) &orig_node))
+		abort();
+
+	memcpy(clone_node, orig_node, sizeof(*clone_node));
+
 	/* Increment the reference count on all the children */
-	for (i = 0; i < new_root->header.nr_entries; i++)
-		sm_inc_block(bt->sm, new_root->values[i]);
+	for (i = 0; i < clone_node->header.nr_entries; i++)
+		tm_inc(tm, clone_node->values[i]);
 
 	return 1;
 }
 
-void btree_dump(struct btree *bt)
-{
-	bm_dump(bt->bm);
-	sm_dump(bt->sm);
-}
-
 /*----------------------------------------------------------------*/
-
-#if 0
-int get_ref_count(struct btree *bt, block_t b)
-{
-	uint64_t key, ref_count;
-
-	if (!btree_lookup(bt, bt->free_node_root, b, &key, &ref_count)) {
-		assert(0);
-		return -1;
-	}
-
-	return ref_count;
-}
-
-int inc_ref_count(struct btree *bt, block_t b)
-{
-        int r, parent_dirty;
-        unsigned depth;
-        block_t parent_block, current_block = bt->free_space_root;
-        struct free_node *fn;
-
-        if (!block_lock(bt->bm, bt->free_space_root, WRITE, &((void *) fn)))
-                return -1;
-
-        parent_dirty = 0;
-        for (depth = 0; depth < ???; depth++) {
-                if (depth > 0)
-                        block_unlock(bt->bm, parent, parent_dirty);
-
-                parent = current_block;
-
-                if (fn->nr_entries == NR_INTERNAL_ENTRIES) {
-                        /* split */
-
-                        /* patch parent */
-
-                }
-        }
-}
-#endif
-/*----------------------------------------------------------------*/
-
-
-#if 0
-struct transaction *trans_begin(struct btree *bt);
-
-int trans_commit(struct transaction *t, block_t new_root);
-int trans_rollback(struct transaction *t);
-
-/*
- * Only need to shadow once per block, so has a small cache of shadowed
- * blocks.
- */
-int trans_is_shadowed(struct transaction *t, block_t);
-int trans_shadow(struct transaction *t, block_t b, block_t *new);
-
-/*----------------------------------------------------------------*/
-
-#endif

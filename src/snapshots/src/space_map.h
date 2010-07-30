@@ -17,6 +17,7 @@ void space_map_destroy(struct space_map *sm);
 int sm_new_block(struct space_map *sm, block_t *b);
 int sm_inc_block(struct space_map *sm, block_t b);
 int sm_dec_block(struct space_map *sm, block_t b);
+uint32_t sm_get_count(struct space_map *sm, block_t b);
 
 void sm_dump(struct space_map *sm);
 

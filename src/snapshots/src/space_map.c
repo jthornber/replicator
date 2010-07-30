@@ -80,6 +80,11 @@ int sm_dec_block(struct space_map *sm, block_t b)
 	return 1;
 }
 
+uint32_t sm_get_count(struct space_map *sm, block_t b)
+{
+	return sm->ref_count[b];
+}
+
 void sm_dump(struct space_map *sm)
 {
 	size_t len = sm->nr_blocks * sizeof(uint32_t);

@@ -1,45 +1,34 @@
 #ifndef SNAPSHOTS_BTREE_H
 #define SNAPSHOTS_BTREE_H
 
-#include "snapshots/block_manager.h"
+#include "snapshots/transaction_manager.h"
 
 /*----------------------------------------------------------------*/
 
-struct btree;
+/*
+ * Manipulates B+ trees with 64bit keys and 64bit values.
+ */
 
-/* FIXME: move the next few functions to transaction manager */
-struct btree *btree_create(struct block_manager *bm);
-void btree_destroy(struct btree *bt);
+/* Set up an empty tree.  O(1). */
+int btree_empty(struct transaction_manager *tm, block_t *root);
 
-int btree_begin(struct btree *bt);
-int btree_commit(struct btree *bt);
-int btree_rollback(struct btree *bt);
-void btree_dump(struct btree *bt);
+/* Delete a tree.  O(n) - this is the slow one! */
+int btree_del(struct transaction_manager *tm, block_t root);
 
-/* FIXME: these can stay */
-int btree_new(struct btree *bt, block_t *new_root);
-int btree_lookup(struct btree *bt, uint64_t key, block_t root,
+/* FIXME: we need 3 lookup variants: lookup_exact, lookup_le, lookup_ge */
+/* O(ln(n)) */
+int btree_lookup(struct transaction_manager *tm, uint64_t key, block_t root,
 		 uint64_t *result_key, uint64_t *result_value);
 
-int btree_insert(struct btree *bt, uint64_t key, uint64_t value, block_t root, block_t *new_root);
-int btree_clone(struct btree *bt, block_t root, block_t *clone);
+/* Insert a new key, or over write an existing value. O(ln(n)) */
+int btree_insert(struct transaction_manager *tm, uint64_t key, uint64_t value, block_t root, block_t *new_root);
+
+/* Remove a key if present */
+int btree_remove(struct transaction_manager *tm, uint64_t key, block_t root);
+
+/* Clone a tree. O(1) */
+int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone);
 
 /*----------------------------------------------------------------*/
 
-#endif
-
-
-
-
-
-#if 0
-int remove(struct btree *bt)
-
-int clone(struct btree *bt, block_t root);
-int delete(struct btree *bt, block_t root); /* but is deleting the same as removing a sub tree from an internal node down ? */
-
-/* we need to access the free space allocator directly in order to find somewhere for our cow data. */
-/* FIXME: this isn't going to work with the lazy freeing scheme */
-int allocate_block(struct btree *bt, block_t *b);
-int free_block(struct btree *bt)
 #endif

@@ -5,6 +5,8 @@
 
 /*----------------------------------------------------------------*/
 
+/* FIXME: move all this into btree.c */
+
 enum node_flags {
         INTERNAL_NODE = 1,
         LEAF_NODE = 1 << 1
@@ -21,7 +23,6 @@ struct node_header {
 
 typedef uint64_t snap_t;
 
-#define BLOCK_SIZE 4096
 
 /* MAX_ENTRIES must be an odd number */
 #define MAX_ENTRIES 255
@@ -33,19 +34,6 @@ struct node {
 	uint64_t values[MAX_ENTRIES];
 };
 
-/* the transaction brackets all on-disk operations */
-struct transaction {
-        struct pool *mem;
-        struct btree *bt;
-        struct list shadowed_blocks;
-        struct list free_blocks;
-};
-
-struct shadowed_block {
-	struct list list;
-	block_t block;
-	struct node *data;
-};
 
 /*
  * Based on the ideas in ["B-trees, Shadowing, and Clones" Ohad Rodeh]

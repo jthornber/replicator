@@ -13,7 +13,7 @@
 #include <unistd.h>
 
 #define BLOCK_SIZE 4096
-#define NR_BLOCKS 10240
+#define NR_BLOCKS 102400
 
 static struct pool *mem_;
 static struct list randoms_;
@@ -50,23 +50,23 @@ static void free_randoms()
 	pool_destroy(mem_);
 }
 
-static void check_insert(struct btree *bt)
+static void check_insert(struct transaction_manager *tm)
 {
 	uint64_t key, value;
 	struct number_list *nl;
 	block_t root = 0;
 
-	btree_begin(bt);
-	if (!btree_new(bt, &root))
+	tm_begin(tm);
+	if (!btree_empty(tm, &root))
 		abort();
 
 	list_iterate_items (nl, &randoms_)
-		if (!btree_insert(bt, nl->key, nl->value, root, &root))
+		if (!btree_insert(tm, nl->key, nl->value, root, &root))
 			barf("insert");
-	btree_commit(bt);
+	tm_commit(tm, root);
 
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_lookup(bt, nl->key, root, &key, &value))
+		if (!btree_lookup(tm, nl->key, root, &key, &value))
 			barf("lookup");
 
 		assert(key == nl->key);
@@ -74,33 +74,35 @@ static void check_insert(struct btree *bt)
 	}
 }
 
-static void check_clone(struct btree *bt)
+static void check_clone(struct transaction_manager *tm)
 {
 	uint64_t key, value;
 	struct number_list *nl;
 	block_t root, clone;
 
-	btree_begin(bt);
+	tm_begin(tm);
 
-	if (!btree_new(bt, &root))
+	if (!btree_empty(tm, &root))
 		abort();
 
 	list_iterate_items (nl, &randoms_)
-		if (!btree_insert(bt, nl->key, nl->value, root, &root))
+		if (!btree_insert(tm, nl->key, nl->value, root, &root))
 			barf("insert");
 
-	btree_clone(bt, root, &clone);
+	btree_clone(tm, root, &clone);
 	assert(clone);
 
-	btree_commit(bt);
+	tm_commit(tm, clone);
 
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_lookup(bt, nl->key, root, &key, &value))
+		if (!btree_lookup(tm, nl->key, clone, &key, &value))
 			barf("lookup");
 
 		assert(key == nl->key);
 		assert(value == nl->value);
 	}
+
+	/* FIXME: try deleting |root| */
 }
 
 static int open_file()
@@ -122,7 +124,7 @@ int main(int argc, char **argv)
 {
 	static struct {
 		const char *name;
-		void (*fn)(struct btree *);
+		void (*fn)(struct transaction_manager *);
 	} table_[] = {
 		{ "check_insert", check_insert },
 		{ "check_clone", check_clone }
@@ -130,19 +132,18 @@ int main(int argc, char **argv)
 
 	int i;
 	struct block_manager *bm;
-	struct btree *bt;
+	struct transaction_manager *tm;
 
 	populate_randoms(10000);
 	for (i = 0; i < sizeof(table_) / sizeof(*table_); i++) {
 		printf("running %s()\n", table_[i].name);
 
 		bm = block_manager_create(open_file(), BLOCK_SIZE, NR_BLOCKS);
-		bt = btree_create(bm);
+		tm = tm_create(bm);
 
-		table_[i].fn(bt);
+		table_[i].fn(tm);
 
-		btree_dump(bt);
-		btree_destroy(bt);
+		tm_destroy(tm);
 		block_manager_destroy(bm);
 	}
 	free_randoms(50);
