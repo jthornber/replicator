@@ -77,7 +77,7 @@ int btree_lookup(struct transaction_manager *tm, uint64_t key, block_t root,
 		if (!tm_read_lock(tm, node_block, (void **) &node)) {
 			if (parent_block)
 				tm_read_unlock(tm, parent_block);
-			return -1;
+			return 0;
 		}
 
 		if (parent_block)
@@ -176,10 +176,17 @@ static int btree_split(struct transaction_manager *tm, block_t block, struct nod
 	return 1;
 }
 
+static void inc_children(struct transaction_manager *tm, struct node *n)
+{
+	unsigned i;
+	for (i = 0; i < n->header.nr_entries; i++)
+		tm_inc(tm, n->values[i]);
+}
+
 int btree_insert(struct transaction_manager *tm, uint64_t key, uint64_t value,
 		 block_t root, block_t *new_root)
 {
-        int i, parent_index = 0;
+        int i, parent_index = 0, duplicated;
         struct node *node, *parent_node = NULL;
 	block_t *block, parent_block = 0, new_root_ = 0, tmp_block;
 
@@ -187,10 +194,13 @@ int btree_insert(struct transaction_manager *tm, uint64_t key, uint64_t value,
 	block = &root;
 
 	for (;;) {
-		if (!tm_shadow_block(tm, *block, block, (void **) &node)) {
+		if (!tm_shadow_block(tm, *block, block, (void **) &node, &duplicated)) {
 			assert(0);
 			/* FIXME: handle */
 		}
+
+		if (duplicated && node->header.flags & INTERNAL_NODE)
+			inc_children(tm, node);
 
 		if (node->header.nr_entries == MAX_ENTRIES) {
 			/* FIXME: horrible hack */

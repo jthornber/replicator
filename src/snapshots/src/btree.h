@@ -23,7 +23,7 @@ int btree_lookup(struct transaction_manager *tm, uint64_t key, block_t root,
 /* Insert a new key, or over write an existing value. O(ln(n)) */
 int btree_insert(struct transaction_manager *tm, uint64_t key, uint64_t value, block_t root, block_t *new_root);
 
-/* Remove a key if present */
+/* Remove a key if present. O(ln(n)) */
 int btree_remove(struct transaction_manager *tm, uint64_t key, block_t root);
 
 /* Clone a tree. O(1) */
