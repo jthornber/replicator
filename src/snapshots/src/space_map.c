@@ -103,4 +103,34 @@ void sm_dump(struct space_map *sm)
 			printf("    %u: %u\n", i, bins[i]);
 }
 
+int sm_equal(struct space_map *sm1, struct space_map *sm2)
+{
+	unsigned i;
+
+	if (sm1->nr_blocks != sm2->nr_blocks)
+		return 0;
+
+	for (i = 0; i < sm1->nr_blocks; i++)
+		if (sm1->ref_count[i] != sm2->ref_count[i])
+			return 0;
+
+	return 1;
+}
+
+void sm_dump_comparison(struct space_map *sm1, struct space_map *sm2)
+{
+	unsigned i;
+
+	if (sm1->nr_blocks != sm2->nr_blocks) {
+		printf("number of block differ %u/%u\n",
+		       (unsigned) sm1->nr_blocks, (unsigned) sm2->nr_blocks);
+		return;
+	}
+
+	for (i = 0; i < sm1->nr_blocks; i++)
+		if (sm1->ref_count[i] != sm2->ref_count[i])
+			printf("counts for block %u differ %u/%u\n",
+			       i, (unsigned) sm1->ref_count[i], (unsigned) sm2->ref_count[i]);
+}
+
 /*----------------------------------------------------------------*/

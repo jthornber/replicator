@@ -50,6 +50,10 @@ static void free_randoms()
 	pool_destroy(mem_);
 }
 
+static void ignore_leaf(uint64_t leaf, struct space_map *sm)
+{
+}
+
 static void check_insert(struct transaction_manager *tm)
 {
 	uint64_t key, value;
@@ -71,6 +75,19 @@ static void check_insert(struct transaction_manager *tm)
 
 		assert(key == nl->key);
 		assert(value == nl->value);
+	}
+
+	/* Check the reference counts */
+	{
+		struct space_map *sm = space_map_create(bm_nr_blocks(tm_get_bm(tm)));
+		if (!sm)
+			abort();
+
+		btree_walk(tm, ignore_leaf, root, sm);
+		if (!sm_equal(tm_get_sm(tm), sm)) {
+			sm_dump_comparison(tm_get_sm(tm), sm);
+			abort();
+		}
 	}
 }
 

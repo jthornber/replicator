@@ -191,4 +191,14 @@ uint32_t tm_ref(struct transaction_manager *tm, block_t b)
 	return sm_get_count(tm->sm, b);
 }
 
+struct space_map *tm_get_sm(struct transaction_manager *tm)
+{
+	return tm->sm;
+}
+
+struct block_manager *tm_get_bm(struct transaction_manager *tm)
+{
+	return tm->bm;
+}
+
 /*----------------------------------------------------------------*/

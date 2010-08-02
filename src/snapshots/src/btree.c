@@ -287,4 +287,25 @@ int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone)
 	return 1;
 }
 
+int btree_walk(struct transaction_manager *tm, leaf_fn lf,
+	       block_t root, struct space_map *sm)
+{
+	unsigned i;
+	struct node *n;
+
+	sm_inc_block(sm, root);
+	if (!tm_read_lock(tm, root, (void **) &n)) {
+		abort();
+	}
+
+	if (n->header.flags & INTERNAL_NODE)
+		for (i = 0; i < n->header.nr_entries; i++)
+			btree_walk(tm, lf, n->values[i], sm);
+	else
+		for (i = 0; i < n->header.nr_entries; i++)
+			lf(n->values[i], sm);
+
+	return 1;
+}
+
 /*----------------------------------------------------------------*/

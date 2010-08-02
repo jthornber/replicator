@@ -31,4 +31,24 @@ int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone);
 
 /*----------------------------------------------------------------*/
 
+/*
+ * Debug only
+ */
+#include "snapshots/space_map.h"
+
+/*
+ * Walks the complete trees incrementing the reference counts in the space
+ * map.  You can then compare with the space map in the transaction
+ * manager.  This assumes no mutators are running.
+ *
+ * The btree code doesn't know how the leaf values are to be interpreted,
+ * are they blocks to be referenced or something else ?  So |leaf_fn| is
+ * passed in to make this decision.
+ */
+typedef void (*leaf_fn)(uint64_t leaf_value, struct space_map *sm);
+int btree_walk(struct transaction_manager *tm, leaf_fn lf,
+	       block_t root, struct space_map *sm);
+
+/*----------------------------------------------------------------*/
+
 #endif
