@@ -33,11 +33,13 @@ enum io_direction {
 enum io_result {
 	IO_BAD_PARAM,		/* eg, this snapshot isn't in this store */
 	IO_ERROR,		/* something went wrong */
-	IO_SUCCESS,		/* it worked, synchronously */
-	IO_DEFER		/* will complete asynchronously */
+	IO_NEED_COPY,		/* it's a new mapping, do the copy then callback */
+	IO_MAPPED		/* simple, pre-existing mapping */
 };
 
 typedef void (*io_complete_fn)(void *context, enum io_result outcome, struct location *result);
+
+/* FIXME: What do we do if a copy fails ? */
 
 struct exception_ops {
 	void (*destroy)(void *context);
@@ -59,40 +61,31 @@ struct exception_ops {
 	int (*get_snapshot_detail)(void *context, unsigned index, struct snapshot_detail *result);
 
 	/*
-	 * The client will need to repeatedly call this until a snapshot
-	 * location finally gets mapped to a non-snapshot location.  For
-	 * instance, if you have a snapshot of a snapshot of a snapshot you
-	 * will have to call this function 3 times (possibly on different
-	 * exception stores).
-	 *
-	 * The client can implement efficient caching of these mappings
-	 * (eg, via a hash table).  This saves duplication of code in
-	 * different exception stores.  Obviously the hash table entry
-	 * should be removed if any of the sub mappings are invalidated.
-	 *
-	 * Writes to a snapshot can trigger a copy-on-write event, so this
-	 * function may complete asynchronously.
+	 * Good snapshot performance relies on amortising the costs
+	 * associated with a copy-on-write exception by running several per
+	 * transaction.
+	 */
+	int (*begin)(void *context);
+	int (*commit)(void *context);
+
+	/*
+	 * If IO_NEED_COPY is returned then the client should ensure that
+	 * this is completed before this transaction is completed.
 	 */
 	enum io_result (*snapshot_map)(void *context,
 				       struct location *from,
 				       enum io_direction io_type,
-				       struct location *result, /* iff the function completes synchronously */
-				       io_complete_fn fn,
-				       void *fn_context);	/* iff async */
+				       struct location *to);
 
 	/*
-	 * Because a write to an origin can trigger a copy-on-write
-	 * exception, which takes time, this function completes
-	 * asynchronously.  You do not need to call this if the origin is
-	 * itself a snapshot (call snapshot_map instead).
-	 *
-	 * If successful, the location argument in the callback will just
-	 * be the same as |from|.
+	 * |to| is only useful when IO_NEED_COPY is returned.
+         * Client should ensure that the copy has been completed before
+         * commit is called.
 	 */
 	enum io_result (*origin_write)(void *context,
 				       struct location *from,
-				       io_complete_fn fn,
-				       void *fn_context);
+				       struct location *to);
+
 
 	/*
 	 * Finally we need a way of creating a new snapshot.  The origin

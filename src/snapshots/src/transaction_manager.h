@@ -42,6 +42,7 @@ int tm_rollback(struct transaction_manager *tm);
  * The |inc_children| flag is used to tell the caller whether they need to
  * adjust reference counts for children at all.
  */
+int tm_alloc_block(struct transaction_manager *tm, block_t *new);
 int tm_new_block(struct transaction_manager *tm, block_t *new, void **data);
 int tm_shadow_block(struct transaction_manager *tm, block_t orig,
 		    block_t *copy, void **data, int *inc_children);
