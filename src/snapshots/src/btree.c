@@ -179,8 +179,9 @@ static int btree_split(struct transaction_manager *tm, block_t block, struct nod
 static void inc_children(struct transaction_manager *tm, struct node *n)
 {
 	unsigned i;
-	for (i = 0; i < n->header.nr_entries; i++)
-		tm_inc(tm, n->values[i]);
+	if (n->header.flags & INTERNAL_NODE)
+		for (i = 0; i < n->header.nr_entries; i++)
+			tm_inc(tm, n->values[i]);
 }
 
 int btree_insert(struct transaction_manager *tm, uint64_t key, uint64_t value,
@@ -199,7 +200,7 @@ int btree_insert(struct transaction_manager *tm, uint64_t key, uint64_t value,
 			/* FIXME: handle */
 		}
 
-		if (duplicated && node->header.flags & INTERNAL_NODE)
+		if (duplicated)
 			inc_children(tm, node);
 
 		if (node->header.nr_entries == MAX_ENTRIES) {
@@ -271,7 +272,6 @@ int btree_insert(struct transaction_manager *tm, uint64_t key, uint64_t value,
 
 int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone)
 {
-	unsigned i;
 	struct node *clone_node, *orig_node;
 
 	/* Copy the root node */
@@ -282,10 +282,7 @@ int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone)
 		abort();
 
 	memcpy(clone_node, orig_node, sizeof(*clone_node));
-
-	/* Increment the reference count on all the children */
-	for (i = 0; i < clone_node->header.nr_entries; i++)
-		tm_inc(tm, clone_node->values[i]);
+	inc_children(tm, clone_node);
 
 	return 1;
 }
