@@ -39,12 +39,12 @@ int tm_rollback(struct transaction_manager *tm);
  * to it.  Because the tm knows the scope of the transaction it can
  * optimise requests for a shadow of a shadow to a no-op.
  *
- * The |duplicated| flag is used to tell the caller whether they need to
+ * The |inc_children| flag is used to tell the caller whether they need to
  * adjust reference counts for children at all.
  */
 int tm_new_block(struct transaction_manager *tm, block_t *new, void **data);
 int tm_shadow_block(struct transaction_manager *tm, block_t orig,
-		    block_t *copy, void **data, int *duplicated);
+		    block_t *copy, void **data, int *inc_children);
 int tm_write_unlock(struct transaction_manager *tm, block_t block);
 
 /*

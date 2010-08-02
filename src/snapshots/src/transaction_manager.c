@@ -126,11 +126,11 @@ int tm_new_block(struct transaction_manager *tm, block_t *new, void **data)
 }
 
 int tm_shadow_block(struct transaction_manager *tm, block_t orig,
-		    block_t *copy, void **data, int *duplicated)
+		    block_t *copy, void **data, int *inc_children)
 {
 	if (is_new_block(tm->t, orig)) {
 		*copy = orig;
-		*duplicated = 0;
+		*inc_children = 0;
 		return bm_lock(tm->bm, orig, WRITE, data);
 	} else {
 		block_t copy_;
@@ -156,7 +156,10 @@ int tm_shadow_block(struct transaction_manager *tm, block_t orig,
 
 		insert_new_block(tm->t, copy_);
 		*copy = copy_;
-		*duplicated = 1;
+
+		sm_dec_block(tm->sm, orig);
+		if (sm_get_count(tm->sm, orig) > 0)
+			*inc_children = 1;
 		return 1;
 	}
 }

@@ -172,6 +172,7 @@ static int btree_split(struct transaction_manager *tm, block_t block, struct nod
 
 	tm_write_unlock(tm, left_block);
 	tm_write_unlock(tm, right_block);
+	tm_dec(tm, block);
 
 	return 1;
 }
