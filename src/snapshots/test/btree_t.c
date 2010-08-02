@@ -54,6 +54,25 @@ static void ignore_leaf(uint64_t leaf, struct space_map *sm)
 {
 }
 
+
+void check_reference_counts(struct transaction_manager *tm,
+			    block_t *roots, unsigned count)
+{
+	unsigned i;
+
+	struct space_map *sm = space_map_create(bm_nr_blocks(tm_get_bm(tm)));
+	if (!sm)
+		abort();
+
+	for (i = 0; i < count; i++)
+		btree_walk(tm, ignore_leaf, roots[i], sm);
+
+	if (!sm_equal(tm_get_sm(tm), sm)) {
+		sm_dump_comparison(tm_get_sm(tm), sm);
+		abort();
+	}
+}
+
 static void check_insert(struct transaction_manager *tm)
 {
 	uint64_t key, value;
@@ -77,18 +96,7 @@ static void check_insert(struct transaction_manager *tm)
 		assert(value == nl->value);
 	}
 
-	/* Check the reference counts */
-	{
-		struct space_map *sm = space_map_create(bm_nr_blocks(tm_get_bm(tm)));
-		if (!sm)
-			abort();
-
-		btree_walk(tm, ignore_leaf, root, sm);
-		if (!sm_equal(tm_get_sm(tm), sm)) {
-			sm_dump_comparison(tm_get_sm(tm), sm);
-			abort();
-		}
-	}
+	check_reference_counts(tm, &root, 1);
 }
 
 static void check_clone(struct transaction_manager *tm)
@@ -117,6 +125,13 @@ static void check_clone(struct transaction_manager *tm)
 
 		assert(key == nl->key);
 		assert(value == nl->value);
+	}
+
+	{
+		block_t roots[2];
+		roots[0] = root;
+		roots[1] = clone;
+		check_reference_counts(tm, roots, 2);
 	}
 
 	/* FIXME: try deleting |root| */
