@@ -1,6 +1,7 @@
 #include "persistent_estore.h"
 #include "transaction_manager.h"
 #include "btree.h"
+#include "device.h"
 
 #include "datastruct/list.h"
 
@@ -8,7 +9,7 @@
 
 struct top_level {
 	block_t origin_maps;	/* a btree of origin maps */
-	block_t snap_maps;	/* a btree of snapshot maps */
+	block_t snapshot_maps;	/* a btree of snapshot maps */
 };
 
 struct snapshot_list {
@@ -19,6 +20,7 @@ struct snapshot_list {
 };
 
 struct pstore {
+	dev_t dev;
 	int fd;
 	struct block_manager *bm;
 	struct transaction_manager *tm;
@@ -63,7 +65,7 @@ void destroy(void *context)
 	struct pstore *ps = (struct pstore *) context;
 	struct snapshot_list *sl, *tmp;
 
-	transaction_manager_destroy(ps->tm);
+	tm_destroy(ps->tm);
 	block_manager_destroy(ps->bm);
 	dev_close(ps->fd);
 
@@ -82,7 +84,7 @@ static uint32_t get_block_size(void *context)
 static unsigned get_snapshot_count(void *context)
 {
 	struct pstore *ps = (struct pstore *) context;
-	return list_size(ps->snaps);
+	return list_size(&ps->snaps);
 }
 
 static int
@@ -90,9 +92,9 @@ get_snapshot_detail(void *context, unsigned index, struct snapshot_detail *resul
 {
 	struct pstore *ps = (struct pstore *) context;
 	struct list *tmp = &ps->snaps;
-	struct snapshot_list *sl = &ps->snaps;
+	struct snapshot_list *sl;
 
-	if (index >= list_size(ps->snaps))
+	if (index >= list_size(&ps->snaps))
 		return 0;
 
 	while (index--)
@@ -112,7 +114,7 @@ int begin(void *context)
 	if (!tm_begin(ps->tm))
 		abort();
 
-	if (!tm_shadow_block(tm, ps->root, &ps->new_root, (void **) &ps->tl, &inc_children))
+	if (!tm_shadow_block(ps->tm, ps->root, &ps->new_root, (void **) &ps->tl, &inc_children))
 		abort();
 
 	if (inc_children)
@@ -143,13 +145,12 @@ static enum io_result origin_read_since(struct pstore *ps,
 					struct location *from,
 					struct location *to)
 {
-	struct pstore *ps = (struct pstore *) context;
 	uint64_t keys[2], result_key, result_value;
 
 	keys[0] = from->dev;
 	keys[1] = pack_block_time(from->block, since);
 
-	if (!btree_lookup_ge_h(tm, ps->tl->origin_maps, keys, 2,
+	if (!btree_lookup_ge_h(ps->tm, ps->tl->origin_maps, keys, 2,
 			       &result_key, &result_value)) {
 
 		/* map to the origin, there is no exception */
@@ -169,10 +170,10 @@ static enum io_result snapshot_exception(struct pstore *ps,
 {
 	block_t cow_dest, new_snap_maps;
 
-	if (!tm_alloc_block(tm, &cow_dest))
+	if (!tm_alloc_block(ps->tm, &cow_dest))
 		abort();
 
-	if (!btree_insert_h(tm, ps->tl->snapshot_maps, keys, 2, cow_dest, &new_snap_maps))
+	if (!btree_insert_h(ps->tm, ps->tl->snapshot_maps, keys, 2, cow_dest, &new_snap_maps))
 		abort();
 
 	ps->tl->snapshot_maps = new_snap_maps;
@@ -188,13 +189,13 @@ enum io_result snapshot_map(void *context,
 			    struct location *to)
 {
 	struct pstore *ps = (struct pstore *) context;
-	uint64_t keys[2];
+	uint64_t keys[2], result_value;
 
-	keys[0] = from.dev;
-	keys[1] = from.block;
+	keys[0] = from->dev;
+	keys[1] = from->block;
 
-	if (!btree_lookup_exact_h(tm, ps->tl->snapshot_maps, keys, 2,
-				  &result_value, leaf_block))
+	if (!btree_lookup_equal_h(ps->tm, ps->tl->snapshot_maps, keys, 2,
+				  &result_value)) {
 		if (io_type == READ) {
 			/* great, just use the origin mapping */
 			uint64_t t = snap_time(from->dev);
@@ -202,6 +203,7 @@ enum io_result snapshot_map(void *context,
 			return origin_read_since(ps, t, from, to);
 		} else
 			return snapshot_exception(ps, keys, to);
+	}
 
 	to->dev = ps->dev;
 	to->block = result_value;
@@ -212,19 +214,18 @@ static enum io_result origin_exception(struct pstore *ps,
 				       uint64_t *keys,
 				       struct location *to)
 {
-	struct pstore *ps = (struct pstore *) context;
 	block_t cow_dest, new_origin_maps;
 
-	if (!tm_alloc_block(tm, &cow_dest))
+	if (!tm_alloc_block(ps->tm, &cow_dest))
 		abort();
 
-	if (!btree_insert_h(tm, tl->origin_maps, keys, 2, cow_dest, &new_origin_maps))
+	if (!btree_insert_h(ps->tm, ps->tl->origin_maps, keys, 2, cow_dest, &new_origin_maps))
 		abort();
 
 	ps->tl->origin_maps = new_origin_maps;
 
-	to.dev = ps->dev;
-	to.block = cow_dest;
+	to->dev = ps->dev;
+	to->block = cow_dest;
 	return IO_NEED_COPY;
 }
 
@@ -233,14 +234,13 @@ enum io_result origin_write(void *context,
 			    struct location *to)
 {
 	struct pstore *ps = (struct pstore *) context;
-	struct top_level *tl;
-	uint64_t keys[2], result_key, result_value;
+	uint64_t keys[2], result_value;
 
 	keys[0] = from->dev;
 	keys[1] = pack_block_time(from->block, ps->time);
 
-	if (!btree_lookup_exact_h(tm, ps->tl->origin_maps, keys, 2,
-				  &result_key, &result_value))
+	if (!btree_lookup_equal_h(ps->tm, ps->tl->origin_maps, keys, 2,
+				  &result_value))
 		return origin_exception(ps, keys, to);
 	else {
 		to->dev = ps->dev;
@@ -265,7 +265,7 @@ int new_snapshot(void *context, dev_t origin, dev_t snap)
 	if (find_snapshot(ps, origin, &sd2)) {
 		sd->origin = sd2->origin;
 		sd->creation_time = sd2->creation_time;
-		if (!btree_clone(tm, orig_root, &new_tree))
+		if (!btree_clone(ps->tm, orig_root, &new_tree))
 			abort();
 	} else {
 		sd->creation_time = ps->t++;
@@ -274,7 +274,7 @@ int new_snapshot(void *context, dev_t origin, dev_t snap)
 			abort();
 	}
 
-	if (!btree_insert(tm, ps->tl->snapshot_maps, snap, new_tree, &new_snap_maps))
+	if (!btree_insert(ps->tm, ps->tl->snapshot_maps, snap, new_tree, &new_snap_maps))
 		abort();
 	ps->tl->snapshot_maps = new_snap_maps;
 	list_add(&ps->snaps, &sd->list);
@@ -283,7 +283,6 @@ int new_snapshot(void *context, dev_t origin, dev_t snap)
 
 int del_snapshot(void *context, dev_t snap)
 {
-	struct pstore *ps = (struct pstore *) context;
 	return 0;
 }
 
@@ -320,7 +319,10 @@ static int create_top_level(struct pstore *ps)
 struct exception_store *persistent_store_create(dev_t dev)
 {
 	struct pstore *ps = (struct pstore *) malloc(sizeof(*ps));
+	struct exception_store *es;
+
 	if (ps) {
+		ps->dev = dev;
 		ps->fd = dev_open(dev);
 		if (ps->fd < 0)
 			abort();
@@ -329,7 +331,7 @@ struct exception_store *persistent_store_create(dev_t dev)
 		if (!ps->bm)
 			abort();
 
-		ps->tm = transaction_manager(ps->bm);
+		ps->tm = tm_create(ps->bm);
 		if (!ps->tm)
 			abort();
 
@@ -338,13 +340,22 @@ struct exception_store *persistent_store_create(dev_t dev)
 		ps->new_root = 0;
 		ps->tl = NULL;
 
-		list_init(ps->snaps);
+		list_init(&ps->snaps);
 
 		if (!create_top_level(ps))
 			abort();
+
+		es = malloc(sizeof(*es));
+		if (!es) {
+			destroy(ps);
+			return NULL;
+		}
+
+		es->ops = &ops;
+		es->context = ps;
 	}
 
-	return ps;
+	return es;
 }
 
 /*----------------------------------------------------------------*/
