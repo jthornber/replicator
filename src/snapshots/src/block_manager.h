@@ -24,8 +24,15 @@ int bm_lock(struct block_manager *bm, block_t b, enum block_lock how, void **dat
 int bm_unlock(struct block_manager *bm, block_t b, int changed);
 int bm_flush(struct block_manager *bm);
 
+/*
+ * Debug
+ */
+
 /* Dumps some statistics to stdout */
 void bm_dump(struct block_manager *bm);
+
+unsigned bm_read_locks_held(struct block_manager *bm);
+unsigned bm_write_locks_held(struct block_manager *bm);
 
 /*----------------------------------------------------------------*/
 

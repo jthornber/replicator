@@ -37,6 +37,16 @@ void free_block(struct block *b)
 	free(b);
 }
 
+struct block *find_block(struct list *head, block_t b)
+{
+	struct block *bl;
+	list_iterate_items (bl, head)
+		if (bl->where == b)
+			return bl;
+
+	return NULL;
+}
+
 /*----------------------------------------------------------------*/
 
 /* FIXME: locking is ignored for now, as is caching */
@@ -87,7 +97,16 @@ block_t bm_nr_blocks(struct block_manager *bm)
 
 int bm_lock(struct block_manager *bm, block_t block, enum block_lock how, void **data)
 {
-	struct block *b = alloc_block(bm->block_size);
+	struct block *b;
+
+	b = find_block(&bm->blocks, block);
+	if (b) {
+		fprintf(stderr, "block %u already locked for %s\n",
+			(unsigned) block, b->type == LOCK_READ ? "read" : "write");
+		abort();
+	}
+
+	b = alloc_block(bm->block_size);
 	if (!b)
 		return 0;
 
@@ -144,6 +163,29 @@ void bm_dump(struct block_manager *bm)
 	printf("Block manager: %u reads, %u writes\n",
 	       bm->read_count, bm->write_count);
 }
+
+static unsigned count_locks(struct block_manager *bm, enum block_lock t)
+{
+	struct block *b;
+	unsigned n = 0;
+
+	list_iterate_items (b, &bm->blocks)
+		if (b->type == t)
+			n++;
+
+	return n;
+}
+
+unsigned bm_read_locks_held(struct block_manager *bm)
+{
+	return count_locks(bm, LOCK_READ);
+}
+
+unsigned bm_write_locks_held(struct block_manager *bm)
+{
+	return count_locks(bm, LOCK_WRITE);
+}
+
 
 /*----------------------------------------------------------------*/
 
