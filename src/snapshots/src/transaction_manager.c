@@ -156,6 +156,7 @@ int tm_shadow_block(struct transaction_manager *tm, block_t orig,
 
 		insert_new_block(tm->t, copy_);
 		*copy = copy_;
+		*data = copy_data;
 
 		sm_dec_block(tm->sm, orig);
 		if (sm_get_count(tm->sm, orig) > 0)
