@@ -1,15 +1,14 @@
 #ifndef SNAPSHOTS_EXCEPTION_H
 #define SNAPSHOTS_EXCEPTION_H
 
+#include "snapshots/types.h"
+
 #include <stdint.h>
 #include <stdlib.h>
 
 /* FIXME: rename this to estore */
 
 /*----------------------------------------------------------------*/
-
-typedef uint64_t block_t;
-typedef uint64_t dev_t;	   /* identifies any device, including snapshots */
 
 struct device {
 	const char *uuid;
@@ -129,24 +128,33 @@ estore_get_snapshot_detail(struct exception_store *es,
 	return es->ops->get_snapshot_detail(es->context, index, result);
 }
 
+static inline int
+estore_begin(struct exception_store *es)
+{
+	return es->ops->begin(es->context);
+}
+
+static inline int
+estore_commit(struct exception_store *es)
+{
+	return es->ops->begin(es->context);
+}
+
 static inline
 enum io_result estore_snapshot_map(struct exception_store *es,
 				   struct location *from,
 				   enum io_direction io_type,
-				   struct location *result,
-				   io_complete_fn fn,
-				   void *fn_context)
+				   struct location *to)
 {
-	return es->ops->snapshot_map(es->context, from, io_type, result, fn, fn_context);
+	return es->ops->snapshot_map(es->context, from, io_type, to);
 }
 
 static inline
 enum io_result estore_origin_write(struct exception_store *es,
 				   struct location *from,
-				   io_complete_fn fn,
-				   void *fn_context)
+				   struct location *to)
 {
-	return es->ops->origin_write(es->context, from, fn, fn_context);
+	return es->ops->origin_write(es->context, from, to);
 }
 
 static inline int
