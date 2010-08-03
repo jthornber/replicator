@@ -6,7 +6,8 @@
 /*----------------------------------------------------------------*/
 
 /*
- * Manipulates B+ trees with 64bit keys and 64bit values.
+ * Manipulates B+ trees with 64bit keys and 64bit values.  No assumptions
+ * about the meanings of the keys or values are made.
  */
 
 /* Set up an empty tree.  O(1). */
@@ -15,59 +16,69 @@ int btree_empty(struct transaction_manager *tm, block_t *root);
 /* Delete a tree.  O(n) - this is the slow one! */
 int btree_del(struct transaction_manager *tm, block_t root);
 
-/* FIXME: we need 3 lookup variants: lookup_exact, lookup_le, lookup_ge */
-/* O(ln(n)) */
+enum lookup_result {
+	LOOKUP_ERROR,
+	LOOKUP_NOT_FOUND,
+	LOOKUP_FOUND
+};
+
+/* Tries to find a key that matches exactly.  O(ln(n)) */
+enum lookup_result
+btree_lookup_equal(struct transaction_manager *tm, block_t root,
+		   uint64_t key, uint64_t *value);
+
 /*
- * A successful lookup will retain a read lock on the leaf node.  Make sure
- * you release it.
+ * Find the greatest key that is less than or equal to that requested.  A
+ * LOOKUP_NOT_FOUND result indicates the key would appear in front of all
+ * (possibly zero) entries.  O(ln(n))
  */
-int btree_lookup_exact(struct transaction_manager *tm,
-		       block_t root, uint64_t key,
-		       uint64_t *value);
+enum lookup_result
+btree_lookup_le(struct transaction_manager *tm, block_t root,
+		uint64_t key, uint64_t *rkey, uint64_t *value);
 
-int btree_lookup_le(struct transaction_manager *tm,
-		    block_t root, uint64_t key,
-		    uint64_t *key, uint64_t *value);
+/*
+ * Find the least key that is greater than or equal to that requested.
+ * LOOKUP_NOT_FOUND indicates all the keys are below.  O(ln(n))
+ */
+enum lookup_result
+btree_lookup_ge(struct transaction_manager *tm, block_t root,
+		uint64_t key, uint64_t *rkey, uint64_t *value);
 
-int btree_lookup_ge(struct transaction_manager *tm,
-		    block_t root, uint64_t key,
-		    uint64_t *key, uint64_t *value);
-
-#if 0
-int btree_lookup(struct transaction_manager *tm, uint64_t key, block_t root,
-		 uint64_t *result_key, uint64_t *result_value);
-#endif
-
-/* Insert a new key, or over write an existing value. O(ln(n)) */
-/* FIXME: make param position of |root| consistent */
-int btree_insert(struct transaction_manager *tm, uint64_t key, uint64_t value,
-		 block_t root, block_t *new_root);
+/*
+ * Insertion (or overwrite an existing value).
+ * O(ln(n))
+ */
+int btree_insert(struct transaction_manager *tm, block_t root,
+		 uint64_t key, uint64_t value,
+		 block_t *new_root);
 
 /* Remove a key if present. O(ln(n)) */
-int btree_remove(struct transaction_manager *tm, uint64_t key, block_t root);
+int btree_remove(struct transaction_manager *tm, block_t root,
+		 uint64_t key, block_t *new_root);
 
 /* Clone a tree. O(1) */
 int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone);
 
 /*
  * Hierarchical btrees.  We often have btrees of btrees, these utilities
- * make it a bit easier to manipulate them.
+ * make it a bit easier to manipulate them.  |keys| is an array with an
+ * entry for each level of the hierarchy.
  */
+int btree_lookup_equal_h(struct transaction_manager *tm, block_t root,
+			 uint64_t *keys, unsigned levels,
+			 uint64_t *value);
+
+int btree_lookup_le_h(struct transaction_manager *tm, block_t root,
+		      uint64_t *keys, unsigned levels,
+		      uint64_t *key, uint64_t *value);
+
+int btree_lookup_ge_h(struct transaction_manager *tm, block_t root,
+		      uint64_t *keys, unsigned levels,
+		      uint64_t *key, uint64_t *value);
+
 int btree_insert_h(struct transaction_manager *tm, block_t root,
 		   uint64_t *keys, unsigned levels,
 		   uint64_t value, block_t *new_root);
-
-int btree_lookup_exact_h(struct transaction_manager *tm,
-			 block_t root, uint64_t *keys, unsigned levels,
-			 uint64_t *value);
-
-int btree_lookup_le_h(struct transaction_manager *tm,
-		      block_t root, uint64_t *keys, unsigned levels,
-		      uint64_t *key, uint64_t *value);
-
-int btree_lookup_ge_h(struct transaction_manager *tm,
-		      block_t root, uint64_t *keys, unsigned levels,
-		      uint64_t *key, uint64_t *value);
 
 /*----------------------------------------------------------------*/
 

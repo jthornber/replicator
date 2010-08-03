@@ -35,6 +35,52 @@ static void check_keys(block_t b, struct node *n)
 	}
 }
 
+/* FIXME: use a binary search for these three */
+static int lower_bound(struct node *n, uint64_t key)
+{
+	int i;
+	for (i = n->header.nr_entries - 1; i >= 0; i--)
+		if (n->keys[i] <= key)
+			break;
+
+	return i;
+}
+
+static int upper_bound(struct node *n, uint64_t key)
+{
+	int i;
+	for (i = 0; i < n->header.nr_entries; i++)
+		if (n->keys[i] >= key)
+			break;
+
+	return i;
+}
+
+static void inc_children(struct transaction_manager *tm, struct node *n)
+{
+	unsigned i;
+	if (n->header.flags & INTERNAL_NODE)
+		for (i = 0; i < n->header.nr_entries; i++)
+			tm_inc(tm, n->values[i]);
+}
+
+static void insert_at(struct node *node, unsigned index, uint64_t key, uint64_t value)
+{
+	if (index > node->header.nr_entries || index >= MAX_ENTRIES)
+		abort();
+
+	if ((node->header.nr_entries > 0) && (index < node->header.nr_entries - 1)) {
+		memmove(node->keys + index + 1, node->keys + index,
+			(node->header.nr_entries - index) * sizeof(node->keys[0]));
+		memmove(node->values + index + 1, node->values + index,
+			(node->header.nr_entries - index) * sizeof(node->values[0]));
+	}
+
+	node->keys[index] = key;
+	node->values[index] = value;
+	node->header.nr_entries++;
+}
+
 /*----------------------------------------------------------------*/
 
 int btree_empty(struct transaction_manager *tm, block_t *root)
@@ -55,54 +101,149 @@ int btree_empty(struct transaction_manager *tm, block_t *root)
 	return 1;
 }
 
-static int lower_bound(struct node *n, uint64_t key)
-{
-	/* FIXME: use a binary search */
-	int i;
-	for (i = 0; i < n->header.nr_entries; i++)
-		if (n->keys[i] > key)
-			break;
-
-	return i - 1;
-}
-
-int btree_lookup(struct transaction_manager *tm, uint64_t key, block_t root,
-		 uint64_t *key_result, uint64_t *result)
+static enum lookup_result
+btree_lookup_raw(struct transaction_manager *tm, block_t root,
+		 uint64_t key, int (*search_fn)(struct node *, uint64_t),
+		 uint64_t *result_key, uint64_t *value, block_t *leaf_block)
 {
         int i;
-        block_t node_block = root, parent_block = 0;
+        block_t block = root, parent = 0;
         struct node *node;
 
 	do {
-		if (!tm_read_lock(tm, node_block, (void **) &node)) {
-			if (parent_block)
-				tm_read_unlock(tm, parent_block);
-			return 0;
+		if (!tm_read_lock(tm, block, (void **) &node)) {
+			if (parent)
+				tm_read_unlock(tm, parent);
+			return LOOKUP_ERROR;
 		}
 
-		if (parent_block)
-			tm_read_unlock(tm, parent_block);
+		if (parent)
+			tm_read_unlock(tm, parent);
 
-		i = lower_bound(node, key);
-		assert(i >= 0);
-		node_block = node->values[i];
+		i = search_fn(node, key);
+		if (i < 0 || i >= node->header.nr_entries) {
+			tm_read_unlock(tm, block);
+			return LOOKUP_NOT_FOUND;
+		}
+
+		block = node->values[i];
 
         } while (!(node->header.flags & LEAF_NODE));
 
-	*key_result = node->keys[i];
-	*result = node->values[i];
-	tm_read_unlock(tm, node_block);
+	*result_key = node->keys[i];
+	*value = node->values[i];
+	*leaf_block = block;
+	return LOOKUP_FOUND;
+}
 
-	return 1;
+int btree_lookup_equal_h(struct transaction_manager *tm, block_t root,
+			 uint64_t *keys, unsigned levels,
+			 uint64_t *value)
+{
+	unsigned level;
+	enum lookup_result r;
+	uint64_t rkey;
+	block_t leaf, old_leaf = 0;
+
+	for (level = 0; level < levels; level++) {
+		r = btree_lookup_raw(tm, root, keys[level], lower_bound, &rkey, value, &leaf);
+
+		if (old_leaf)
+			tm_read_unlock(tm, old_leaf);
+
+		if (r == LOOKUP_FOUND) {
+			if (rkey != keys[level]) {
+				tm_read_unlock(tm, leaf);
+				return LOOKUP_NOT_FOUND;
+			}
+		} else
+			return r;
+
+		old_leaf = leaf;
+		root = *value;
+	}
+
+	tm_read_unlock(tm, old_leaf);
+	return r;
+}
+
+int btree_lookup_le_h(struct transaction_manager *tm, block_t root,
+		      uint64_t *keys, unsigned levels,
+		      uint64_t *key, uint64_t *value)
+{
+	unsigned level;
+	enum lookup_result r;
+	block_t leaf, old_leaf = 0;
+
+	for (level = 0; level < levels; level++) {
+		r = btree_lookup_raw(tm, root, keys[level], lower_bound, key, value, &leaf);
+
+		if (old_leaf)
+			tm_read_unlock(tm, old_leaf);
+
+		if (r != LOOKUP_FOUND)
+			return r;
+
+		old_leaf = leaf;
+		root = *value;
+	}
+
+	tm_read_unlock(tm, old_leaf);
+	return r;
+}
+
+int btree_lookup_ge_h(struct transaction_manager *tm, block_t root,
+		      uint64_t *keys, unsigned levels,
+		      uint64_t *key, uint64_t *value)
+{
+	unsigned level;
+	enum lookup_result r;
+	block_t leaf, old_leaf = 0;
+
+	for (level = 0; level < levels; level++) {
+		r = btree_lookup_raw(tm, root, keys[level], upper_bound, key, value, &leaf);
+
+		if (old_leaf)
+			tm_read_unlock(tm, old_leaf);
+
+		if (r != LOOKUP_FOUND)
+			return r;
+
+		old_leaf = leaf;
+		root = *value;
+	}
+
+	tm_read_unlock(tm, old_leaf);
+	return r;
+}
+
+enum lookup_result
+btree_lookup_equal(struct transaction_manager *tm, block_t root,
+		   uint64_t key, uint64_t *value)
+{
+	return btree_lookup_equal_h(tm, root, &key, 1, value);
+}
+
+enum lookup_result
+btree_lookup_le(struct transaction_manager *tm, block_t root,
+		uint64_t key, uint64_t *rkey, uint64_t *value)
+{
+	return btree_lookup_le_h(tm, root, &key, 1, rkey, value);
+}
+
+enum lookup_result
+btree_lookup_ge(struct transaction_manager *tm, block_t root,
+		uint64_t key, uint64_t *rkey, uint64_t *value)
+{
+	return btree_lookup_ge_h(tm, root, &key, 1, rkey, value);
 }
 
 /*
  * Splits a full node.  Returning the desired side, indicated by |key|, in
  * |node_block| and |node|.
  *
- * FIXME: we should be decrementing blocks reference count, but we're not
- * yet incrementing them as part of the shadowing either.  So leave for
- * now.
+ * FIXME: rather than allocating 2 new blocks, we should shadow one of them
+ * and allocate the other.
  */
 static int btree_split(struct transaction_manager *tm, block_t block, struct node *node,
 		       block_t parent_block, struct node *parent_node, unsigned parent_index,
@@ -177,31 +318,24 @@ static int btree_split(struct transaction_manager *tm, block_t block, struct nod
 	return 1;
 }
 
-static void inc_children(struct transaction_manager *tm, struct node *n)
+static int btree_insert_raw(struct transaction_manager *tm, block_t root, uint64_t key,
+			    block_t *new_root, block_t *leaf,
+			    struct node **leaf_node, unsigned *index)
 {
-	unsigned i;
-	if (n->header.flags & INTERNAL_NODE)
-		for (i = 0; i < n->header.nr_entries; i++)
-			tm_inc(tm, n->values[i]);
-}
-
-int btree_insert(struct transaction_manager *tm, uint64_t key, uint64_t value,
-		 block_t root, block_t *new_root)
-{
-        int i, parent_index = 0, duplicated;
+        int i, parent_index = 0, inc;
         struct node *node, *parent_node = NULL;
 	block_t *block, parent_block = 0, new_root_ = 0, tmp_block;
 
-	*new_root = root;	/* The root block may already be a shadow */
+	*new_root = root;
 	block = &root;
 
 	for (;;) {
-		if (!tm_shadow_block(tm, *block, block, (void **) &node, &duplicated)) {
+		if (!tm_shadow_block(tm, *block, block, (void **) &node, &inc)) {
 			assert(0);
 			/* FIXME: handle */
 		}
 
-		if (duplicated)
+		if (inc)
 			inc_children(tm, node);
 
 		if (node->header.nr_entries == MAX_ENTRIES) {
@@ -238,37 +372,69 @@ int btree_insert(struct transaction_manager *tm, uint64_t key, uint64_t value,
 		block = node->values + i;
         }
 
-	/* so now we've got to a leaf node */
-	if (i < 0) {
-		/* insert at the start */
-		memmove(node->keys + 1, node->keys,
-			node->header.nr_entries * sizeof(node->keys[0]));
-		memmove(node->values + 1, node->values,
-			node->header.nr_entries * sizeof(node->values[0]));
-		node->keys[0] = key;
-		node->values[0] = value;
-
-	} else if (node->keys[i] == key)
-		node->values[i] = value; /* mutate the existing value */
-
-	else {
-		/* insert the new value _after_ i */
-		i++;
-		memmove(node->keys + i + 1, node->keys + i,
-			(node->header.nr_entries - i) * sizeof(node->keys[0]));
-		memmove(node->values + i + 1, node->values + i,
-			(node->header.nr_entries - i) * sizeof(node->values[0]));
-		node->keys[i] = key;
-		node->values[i] = value;
-	}
-	node->header.nr_entries++;
+	/*
+	 * FIXME: we can't refer to *block here, since the parent_block has
+	 * been unlocked (Valgrind spots this).
+	 */
 	if (new_root_)
 		*new_root = new_root_;
-
-	check_keys(*block, node);
-	tm_write_unlock(tm, *block);
+	*leaf = *block;
+	*leaf_node = node;
+	*index = i + 1;
 
 	return 1;
+}
+
+int btree_insert_h(struct transaction_manager *tm, block_t root,
+		   uint64_t *keys, unsigned levels,
+		   uint64_t value, block_t *new_root)
+{
+	int need_insert;
+	unsigned level, index, last_level = levels - 1;
+	block_t leaf, old_leaf = 0, *block;
+	struct node *leaf_node;
+
+	*new_root = root;
+	block = new_root;
+
+	for (level = 0; level < levels; level++) {
+		if (!btree_insert_raw(tm, *block, keys[level], block, &leaf, &leaf_node, &index))
+			abort();
+
+		if (old_leaf)
+			tm_write_unlock(tm, old_leaf);
+
+		need_insert = ((index >= leaf_node->header.nr_entries) ||
+			       (leaf_node->keys[index] != keys[level]));
+
+		if (level == last_level) {
+			if (need_insert)
+				insert_at(leaf_node, index, keys[level], value);
+			else
+				leaf_node->values[index] = value;
+		} else {
+			if (need_insert) {
+				block_t new_root;
+				if (!btree_empty(tm, &new_root))
+					abort();
+
+				insert_at(leaf_node, index, keys[level], new_root);
+			}
+		}
+
+		old_leaf = leaf;
+		block = leaf_node->values + index;
+	}
+
+	tm_write_unlock(tm, leaf);
+	return 1;
+}
+
+int btree_insert(struct transaction_manager *tm, block_t root,
+		 uint64_t key, uint64_t value,
+		 block_t *new_root)
+{
+	return btree_insert_h(tm, root, &key, 1, value, new_root);
 }
 
 int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone)

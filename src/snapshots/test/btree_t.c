@@ -75,7 +75,7 @@ void check_reference_counts(struct transaction_manager *tm,
 
 static void check_insert(struct transaction_manager *tm)
 {
-	uint64_t key, value;
+	uint64_t value;
 	struct number_list *nl;
 	block_t root = 0;
 
@@ -84,15 +84,14 @@ static void check_insert(struct transaction_manager *tm)
 		abort();
 
 	list_iterate_items (nl, &randoms_)
-		if (!btree_insert(tm, nl->key, nl->value, root, &root))
+		if (!btree_insert(tm, root, nl->key, nl->value, &root))
 			barf("insert");
 	tm_commit(tm, root);
 
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_lookup(tm, nl->key, root, &key, &value))
+		if (!btree_lookup_equal(tm, root, nl->key, &value))
 			barf("lookup");
 
-		assert(key == nl->key);
 		assert(value == nl->value);
 	}
 
@@ -101,7 +100,7 @@ static void check_insert(struct transaction_manager *tm)
 
 static void check_clone(struct transaction_manager *tm)
 {
-	uint64_t key, value;
+	uint64_t value;
 	struct number_list *nl;
 	block_t root, clone;
 
@@ -111,7 +110,7 @@ static void check_clone(struct transaction_manager *tm)
 		abort();
 
 	list_iterate_items (nl, &randoms_)
-		if (!btree_insert(tm, nl->key, nl->value, root, &root))
+		if (!btree_insert(tm, root, nl->key, nl->value, &root))
 			barf("insert");
 
 	btree_clone(tm, root, &clone);
@@ -120,10 +119,9 @@ static void check_clone(struct transaction_manager *tm)
 	tm_commit(tm, clone);
 
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_lookup(tm, nl->key, clone, &key, &value))
+		if (!btree_lookup_equal(tm, clone, nl->key, &value))
 			barf("lookup");
 
-		assert(key == nl->key);
 		assert(value == nl->value);
 	}
 
@@ -166,7 +164,7 @@ int main(int argc, char **argv)
 	struct block_manager *bm;
 	struct transaction_manager *tm;
 
-	populate_randoms(10000);
+	populate_randoms(1);
 	for (i = 0; i < sizeof(table_) / sizeof(*table_); i++) {
 		printf("running %s()\n", table_[i].name);
 
