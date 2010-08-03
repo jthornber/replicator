@@ -73,6 +73,21 @@ void check_reference_counts(struct transaction_manager *tm,
 	}
 }
 
+static void check_locks(struct transaction_manager *tm)
+{
+	unsigned rlocks = bm_read_locks_held(tm_get_bm(tm));
+	unsigned wlocks = bm_write_locks_held(tm_get_bm(tm));
+
+	if (rlocks)
+		fprintf(stderr, "%u read locks remain\n", rlocks);
+
+	if (wlocks)
+		fprintf(stderr, "%u write locks remain\n", wlocks);
+
+	if (rlocks || wlocks)
+		abort();
+}
+
 static void check_insert(struct transaction_manager *tm)
 {
 	uint64_t value;
@@ -87,6 +102,7 @@ static void check_insert(struct transaction_manager *tm)
 		if (!btree_insert(tm, root, nl->key, nl->value, &root))
 			barf("insert");
 	tm_commit(tm, root);
+	check_locks(tm);
 
 	list_iterate_items (nl, &randoms_) {
 		if (!btree_lookup_equal(tm, root, nl->key, &value))
@@ -94,8 +110,87 @@ static void check_insert(struct transaction_manager *tm)
 
 		assert(value == nl->value);
 	}
+	check_locks(tm);
 
 	check_reference_counts(tm, &root, 1);
+}
+
+static void check_insert_h(struct transaction_manager *tm)
+{
+	typedef uint64_t table_entry[5];
+	static table_entry table[] = {
+		{ 1, 1, 1, 1, 100 },
+		{ 1, 1, 1, 2, 101 },
+		{ 1, 1, 1, 3, 102 },
+
+		{ 1, 1, 2, 1, 200 },
+		{ 1, 1, 2, 2, 201 },
+		{ 1, 1, 2, 3, 202 },
+
+		{ 2, 1, 1, 1, 301 },
+		{ 2, 1, 1, 2, 302 },
+		{ 2, 1, 1, 3, 303 }
+	};
+
+	static table_entry overwrites[] = {
+		{ 1, 1, 1, 1, 1000 }
+	};
+
+	uint64_t value;
+	block_t root = 0;
+	int i;
+
+	tm_begin(tm);
+	if (!btree_empty(tm, &root))
+		abort();
+
+	for (i = 0; i < sizeof(table) / sizeof(*table); i++) {
+		if (!btree_insert_h(tm, root, table[i], 4, table[i][4], &root))
+			barf("insert");
+	}
+	tm_commit(tm, root);
+	check_locks(tm);
+
+	for (i = 0; i < sizeof(table) / sizeof(*table); i++) {
+		if (!btree_lookup_equal_h(tm, root, table[i], 4, &value))
+			barf("lookup");
+
+		assert(value == table[i][4]);
+	}
+	check_locks(tm);
+
+	/* check multiple transactions are ok */
+	{
+		uint64_t keys[4] = { 1, 1, 1, 4 }, value;
+
+		tm_begin(tm);
+		if (!btree_insert_h(tm, root, keys, 4, 2112, &root))
+			barf("insert");
+		tm_commit(tm, root);
+		check_locks(tm);
+
+		if (!btree_lookup_equal_h(tm, root, keys, 4, &value))
+			barf("lookup");
+
+		assert(value == 2112);
+	}
+
+	/* check overwrites */
+	tm_begin(tm);
+	for (i = 0; i < sizeof(overwrites) / sizeof(*overwrites); i++) {
+		if (!btree_insert_h(tm, root, overwrites[i], 4, overwrites[i][4], &root))
+			barf("insert");
+	}
+	tm_commit(tm, root);
+	check_locks(tm);
+
+	for (i = 0; i < sizeof(overwrites) / sizeof(*overwrites); i++) {
+		if (!btree_lookup_equal_h(tm, root, overwrites[i], 4, &value))
+			barf("lookup");
+
+		assert(value == overwrites[i][4]);
+	}
+	check_locks(tm);
 }
 
 static void check_clone(struct transaction_manager *tm)
@@ -117,6 +212,7 @@ static void check_clone(struct transaction_manager *tm)
 	assert(clone);
 
 	tm_commit(tm, clone);
+	check_locks(tm);
 
 	list_iterate_items (nl, &randoms_) {
 		if (!btree_lookup_equal(tm, clone, nl->key, &value))
@@ -157,14 +253,15 @@ int main(int argc, char **argv)
 		void (*fn)(struct transaction_manager *);
 	} table_[] = {
 		{ "check_insert", check_insert },
-		{ "check_clone", check_clone }
+		{ "check_clone", check_clone },
+		{ "check_insert_h", check_insert_h }
 	};
 
 	int i;
 	struct block_manager *bm;
 	struct transaction_manager *tm;
 
-	populate_randoms(1);
+	populate_randoms(32);
 	for (i = 0; i < sizeof(table_) / sizeof(*table_); i++) {
 		printf("running %s()\n", table_[i].name);
 
