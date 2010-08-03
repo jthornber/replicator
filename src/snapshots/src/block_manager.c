@@ -117,7 +117,7 @@ int bm_unlock(struct block_manager *bm, block_t block, int changed)
 	list_iterate_items_safe (b, tmp, &bm->blocks) {
 		if (b->where == block) {
 			if (changed) {
-				if (b->type != WRITE)
+				if (b->type != LOCK_WRITE)
 					return 0;
 
 				bm->write_count++;

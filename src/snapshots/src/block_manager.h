@@ -16,8 +16,8 @@ size_t bm_block_size(struct block_manager *bm);
 block_t bm_nr_blocks(struct block_manager *bm);
 
 enum block_lock {
-	READ,
-	WRITE
+	LOCK_READ,
+	LOCK_WRITE
 };
 
 int bm_lock(struct block_manager *bm, block_t b, enum block_lock how, void **data);
