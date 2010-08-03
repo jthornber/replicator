@@ -69,7 +69,7 @@ static void insert_at(struct node *node, unsigned index, uint64_t key, uint64_t 
 	if (index > node->header.nr_entries || index >= MAX_ENTRIES)
 		abort();
 
-	if ((node->header.nr_entries > 0) && (index < node->header.nr_entries - 1)) {
+	if ((node->header.nr_entries > 0) && (index < node->header.nr_entries)) {
 		memmove(node->keys + index + 1, node->keys + index,
 			(node->header.nr_entries - index) * sizeof(node->keys[0]));
 		memmove(node->values + index + 1, node->values + index,
@@ -126,13 +126,14 @@ btree_lookup_raw(struct transaction_manager *tm, block_t root,
 			return LOOKUP_NOT_FOUND;
 		}
 
+		parent = block;
 		block = node->values[i];
 
         } while (!(node->header.flags & LEAF_NODE));
 
 	*result_key = node->keys[i];
 	*value = node->values[i];
-	*leaf_block = block;
+	*leaf_block = parent;
 	return LOOKUP_FOUND;
 }
 
@@ -163,7 +164,7 @@ int btree_lookup_equal_h(struct transaction_manager *tm, block_t root,
 		root = *value;
 	}
 
-	tm_read_unlock(tm, old_leaf);
+	tm_read_unlock(tm, leaf);
 	return r;
 }
 
@@ -327,7 +328,7 @@ static int btree_insert_raw(struct transaction_manager *tm, block_t root, uint64
 	block_t *block, parent_block = 0, new_root_ = 0, tmp_block;
 
 	*new_root = root;
-	block = &root;
+	block = new_root;
 
 	for (;;) {
 		if (!tm_shadow_block(tm, *block, block, (void **) &node, &inc)) {
@@ -380,7 +381,11 @@ static int btree_insert_raw(struct transaction_manager *tm, block_t root, uint64
 		*new_root = new_root_;
 	*leaf = *block;
 	*leaf_node = node;
-	*index = i + 1;
+
+	if (node->keys[i] != key)
+		i++;
+
+	*index = i;
 
 	return 1;
 }
@@ -410,8 +415,10 @@ int btree_insert_h(struct transaction_manager *tm, block_t root,
 		if (level == last_level) {
 			if (need_insert)
 				insert_at(leaf_node, index, keys[level], value);
-			else
+			else {
+				fprintf(stderr, "overwriting value\n");
 				leaf_node->values[index] = value;
+			}
 		} else {
 			if (need_insert) {
 				block_t new_root;
@@ -449,6 +456,7 @@ int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone)
 		abort();
 
 	memcpy(clone_node, orig_node, sizeof(*clone_node));
+	tm_read_unlock(tm, root);
 	inc_children(tm, clone_node);
 
 	return 1;
@@ -471,6 +479,8 @@ int btree_walk(struct transaction_manager *tm, leaf_fn lf,
 	else
 		for (i = 0; i < n->header.nr_entries; i++)
 			lf(n->values[i], sm);
+
+	tm_read_unlock(tm, root);
 
 	return 1;
 }
