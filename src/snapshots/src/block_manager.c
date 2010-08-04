@@ -108,6 +108,8 @@ static void lock_block(struct block_manager *bm, struct block *b, enum block_loc
 		break;
 
 	case LOCK_WRITE:
+		if (b->write_count)
+			abort();
 		b->write_count++;
 		break;
 	}
@@ -233,13 +235,13 @@ void block_manager_destroy(struct block_manager *bm)
 	struct list *l, *tmp;
 
 	pthread_mutex_destroy(&bm->lock);
-	free(bm->buckets);
 
 	list_iterate_safe (l, tmp, &bm->lru_list) {
 		struct block *b = list_struct_base(l, struct block, lru);
 		free_block(bm, b);
 	}
 
+	free(bm->buckets);
 	free(bm);
 }
 
