@@ -159,8 +159,7 @@ int tm_shadow_block(struct transaction_manager *tm, block_t orig,
 		*data = copy_data;
 
 		sm_dec_block(tm->sm, orig);
-		if (sm_get_count(tm->sm, orig) > 0)
-			*inc_children = 1;
+		*inc_children = sm_get_count(tm->sm, orig) > 0;
 		return 1;
 	}
 }
