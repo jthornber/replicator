@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#undef BLOCK_SIZE
 #define BLOCK_SIZE 1024
 #define NR_BLOCKS 10240
 
@@ -41,50 +42,61 @@ void check_read(struct block_manager *bm)
 	void *block = NULL;
 
 	for (i = 0; i < NR_BLOCKS; i++) {
-		block_lock(bm, i, READ, &block);
+		bm_lock(bm, i, LOCK_READ, &block);
 		memset(data, i, sizeof(data));
 		assert(!memcmp(data, block, sizeof(data)));
-		block_unlock(bm, i, 0);
+		bm_unlock(bm, i, 0);
 	}
+
+	assert(bm_read_locks_held(bm) == 0);
 }
 
 void check_write(struct block_manager *bm)
 {
 	unsigned char *data;
 
-	if (!block_lock(bm, 123, WRITE, (void **) &data))
+	if (!bm_lock(bm, 123, LOCK_WRITE, (void **) &data))
 		barf("coudln't lock block");
 
 	data[0] = 'e';
 	data[457] = 'j';
 	data[1023] = 't';
 
-	block_unlock(bm, 123, 1);
+	bm_unlock(bm, 123, 1);
 
-	if (!block_lock(bm, 123, READ, (void **) &data))
+	if (!bm_lock(bm, 123, LOCK_READ, (void **) &data))
 		barf("couldn't lock block");
 
 	assert(data[0] == 'e');
 	assert(data[457] == 'j');
 	assert(data[1023] = 't');
+
+	bm_unlock(bm, 123, 0);
+
+	assert(bm_read_locks_held(bm) == 0);
+	assert(bm_write_locks_held(bm) == 0);
 }
 
 void check_bad_unlock(struct block_manager *bm)
 {
 	void *data;
 
-	assert(!block_unlock(bm, 124, 0));
-	assert(!block_unlock(bm, 124, 1));
+	assert(!bm_unlock(bm, 124, 0));
+	assert(!bm_unlock(bm, 124, 1));
+	assert(bm_read_locks_held(bm) == 0);
+	assert(bm_write_locks_held(bm) == 0);
 
-	assert(block_lock(bm, 124, READ, &data));
-	assert(!block_unlock(bm, 124, 1));
-	assert(block_unlock(bm, 124, 0));
+	assert(bm_lock(bm, 124, LOCK_READ, &data));
+	assert(!bm_unlock(bm, 124, 1));
+	assert(bm_unlock(bm, 124, 0));
+	assert(bm_read_locks_held(bm) == 0);
+	assert(bm_write_locks_held(bm) == 0);
 }
 
 int main(int argc, char **argv)
 {
 	int fd = create_file();
-	struct block_manager *bm = block_manager_create(fd, BLOCK_SIZE, NR_BLOCKS);
+	struct block_manager *bm = block_manager_create(fd, BLOCK_SIZE, NR_BLOCKS, 4);
 	check_read(bm);
 	check_write(bm);
 	check_bad_unlock(bm);
