@@ -2,6 +2,7 @@
 
 #include "datastruct/list.h"
 
+#include <assert.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -16,6 +17,7 @@ struct block {
 	block_t where;
 	enum block_lock type;
 	void *data;
+	int dirty;
 
 	/* debug fields */
 	unsigned read_count;
@@ -33,6 +35,7 @@ struct block_manager {
 
 	pthread_mutex_t lock;	/* protects both lru and hash */
 	struct list lru_list;
+	struct list locked_list;
 
 	/* hash table of cached blocks */
 	unsigned cache_size;
@@ -53,6 +56,7 @@ static struct block *alloc_block(size_t block_size)
 		free(b);
 		return NULL;
 	}
+	b->dirty = 0;
 	b->read_count = 0;
 	b->write_count = 0;
 	return b;
@@ -72,7 +76,26 @@ static void free_block(struct block *b)
 	free(b);
 }
 
-static void lock_block(struct block *b, enum block_lock how)
+static void add_to_lru(struct block_manager *bm, struct block *b)
+{
+	assert(b->read_count == 0);
+	assert(b->write_count == 0);
+
+	pthread_mutex_lock(&bm->lock);
+	list_del(&b->lru);
+	list_add_h(&bm->lru_list, &b->lru);
+	pthread_mutex_unlock(&bm->lock);
+}
+
+static void add_to_locked(struct block_manager *bm, struct block *b)
+{
+	pthread_mutex_lock(&bm->lock);
+	list_del(&b->lru);
+	list_add_h(&bm->locked_list, &b->lru);
+	pthread_mutex_unlock(&bm->lock);
+}
+
+static void lock_block(struct block_manager *bm, struct block *b, enum block_lock how)
 {
 	switch (how) {
 	case LOCK_READ:
@@ -82,6 +105,21 @@ static void lock_block(struct block *b, enum block_lock how)
 	case LOCK_WRITE:
 		b->write_count++;
 		break;
+	}
+	b->type = how;
+	add_to_locked(bm, b);
+}
+
+static void unlock_block(struct block_manager *bm, struct block *b)
+{
+	if (b->read_count) {
+		b->read_count--;
+		if (!b->read_count)
+			add_to_lru(bm, b);
+	} else {
+		b->write_count--;
+		assert(b->write_count == 0);
+		add_to_lru(bm, b);
 	}
 }
 
@@ -122,14 +160,6 @@ static void insert_block(struct block_manager *bm, struct block *b)
 	pthread_mutex_unlock(&bm->lock);
 }
 
-static void lru_update(struct block_manager *bm, struct block *b)
-{
-	pthread_mutex_lock(&bm->lock);
-	list_del(&b->lru);
-	list_add_h(&bm->lru_list, &b->lru);
-	pthread_mutex_unlock(&bm->lock);
-}
-
 static unsigned next_power_of_2(unsigned n)
 {
 	/* FIXME: there's a bit twiddling way of doing this */
@@ -138,6 +168,15 @@ static unsigned next_power_of_2(unsigned n)
 		p <<= 1;
 
 	return p;
+}
+
+static int write_block(struct block_manager *bm, struct block *b)
+{
+	bm->write_count++;	/* FIXME: unprotected */
+	if ((lseek(bm->fd, b->where * bm->block_size, SEEK_SET) < 0) ||
+	    (write(bm->fd, b->data, bm->block_size) < 0))
+		return 0;
+	return 1;
 }
 
 /*----------------------------------------------------------------*/
@@ -155,6 +194,7 @@ block_manager_create(int fd, size_t block_size, block_t nr_blocks, unsigned cach
 	bm->nr_blocks = nr_blocks;
 	pthread_mutex_init(&bm->lock, NULL);
 	list_init(&bm->lru_list);
+	list_init(&bm->locked_list);
 
 	bm->cache_size = cache_size;
 	bm->nr_buckets = next_power_of_2(cache_size);
@@ -199,9 +239,10 @@ int bm_lock(struct block_manager *bm, block_t block, enum block_lock how, void *
 	struct block *b;
 
 	b = find_block(bm, block);
-	if (b)
-		lock_block(b, how);
-	else {
+	if (b) {
+		*data = b->data;
+		lock_block(bm, b, how);
+	} else {
 		b = alloc_block(bm->block_size);
 		if (!b)
 			return 0;
@@ -218,11 +259,10 @@ int bm_lock(struct block_manager *bm, block_t block, enum block_lock how, void *
 		}
 
 		b->where = block;
-		b->type = how;
 		*data = b->data;
 
 		insert_block(bm, b);
-		lru_update(bm, b);
+		lock_block(bm, b, how);
 	}
 
 	return 1;
@@ -235,22 +275,40 @@ int bm_unlock(struct block_manager *bm, block_t block, int changed)
 	if (!b)
 		return 0;
 
+	if (!b->read_count && !b->write_count)
+		return 0;
+
 	if (changed) {
 		if (b->type != LOCK_WRITE)
 			return 0;
-
-		bm->write_count++;
-		if ((lseek(bm->fd, block * bm->block_size, SEEK_SET) < 0) ||
-		    (write(bm->fd, b->data, bm->block_size) < 0))
-			return 0;
+		b->dirty = 1;
 	}
-	free_block(b);
+	unlock_block(bm, b);
 	return 1;
 }
 
 int bm_flush(struct block_manager *bm)
 {
-	return 1;
+	/*
+	 * Run through the lru list writing any dirty blocks.  We ignore
+	 * locked blocks since they're still being updated.
+	 */
+	int r = 1;
+	struct list *l, *tmp;
+	pthread_mutex_lock(&bm->lock);
+	list_iterate_safe (l, tmp, &bm->lru_list) {
+		struct block *b = list_struct_base(l, struct block, lru);
+		if (b->dirty) {
+			if (write_block(bm, b))
+				b->dirty = 0;
+			else
+				r = 0;
+		}
+		free_block(b);	/* FIXME: leave on the lru list so it can be reused */
+	}
+	pthread_mutex_unlock(&bm->lock);
+
+	return r;
 }
 
 void bm_dump(struct block_manager *bm)
@@ -264,7 +322,7 @@ static unsigned count_locks(struct block_manager *bm, enum block_lock t)
 	struct list *l;
 	unsigned n = 0;
 
-	list_iterate (l, &bm->lru_list) {
+	list_iterate (l, &bm->locked_list) {
 		struct block *b = list_struct_base(l, struct block, lru);
 		if (b->type == t)
 			n++;
