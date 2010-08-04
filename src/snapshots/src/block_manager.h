@@ -9,7 +9,8 @@
 
 struct block_manager;
 
-struct block_manager *block_manager_create(int fd, size_t block_size, block_t nr_blocks);
+struct block_manager *
+block_manager_create(int fd, size_t block_size, block_t nr_blocks, unsigned cache_size);
 void block_manager_destroy(struct block_manager *bm);
 
 size_t bm_block_size(struct block_manager *bm);
