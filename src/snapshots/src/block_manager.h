@@ -22,6 +22,7 @@ enum block_lock {
 };
 
 int bm_lock(struct block_manager *bm, block_t b, enum block_lock how, void **data);
+int bm_lock_no_read(struct block_manager *bm, block_t b, enum block_lock how, void **data);
 int bm_unlock(struct block_manager *bm, block_t b, int changed);
 int bm_flush(struct block_manager *bm);
 

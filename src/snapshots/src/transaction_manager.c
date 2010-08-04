@@ -119,7 +119,7 @@ int tm_new_block(struct transaction_manager *tm, block_t *new, void **data)
 	if (!sm_new_block(tm->sm, new))
 		barf("sm_new_block");
 
-	if (!bm_lock(tm->bm, *new, LOCK_WRITE, data))
+	if (!bm_lock_no_read(tm->bm, *new, LOCK_WRITE, data))
 		barf("block_lock");
 
 	return insert_new_block(tm->t, *new);
@@ -139,7 +139,7 @@ int tm_shadow_block(struct transaction_manager *tm, block_t orig,
 		if (!sm_new_block(tm->sm, &copy_))
 			return 0;
 
-		if (!bm_lock(tm->bm, copy_, LOCK_WRITE, &copy_data)) {
+		if (!bm_lock_no_read(tm->bm, copy_, LOCK_WRITE, &copy_data)) {
 			sm_dec_block(tm->sm, copy_);
 			abort();
 		}

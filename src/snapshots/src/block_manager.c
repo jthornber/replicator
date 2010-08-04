@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -250,7 +251,7 @@ block_t bm_nr_blocks(struct block_manager *bm)
 	return bm->nr_blocks;
 }
 
-int bm_lock(struct block_manager *bm, block_t block, enum block_lock how, void **data)
+static int bm_lock_(struct block_manager *bm, block_t block, enum block_lock how, int need_read, void **data)
 {
 	struct block *b;
 
@@ -264,9 +265,14 @@ int bm_lock(struct block_manager *bm, block_t block, enum block_lock how, void *
 			return 0;
 
 		b->where = block;
-		if (!read_block(bm, b)) {
-			free_block(bm, b);
-			return 0;
+
+		if (need_read) {
+			if (!read_block(bm, b)) {
+				free_block(bm, b);
+				return 0;
+			}
+		} else {
+			memset(b->data, 0, bm->block_size);
 		}
 
 		*data = b->data;
@@ -276,6 +282,20 @@ int bm_lock(struct block_manager *bm, block_t block, enum block_lock how, void *
 
 	return 1;
 }
+
+int bm_lock(struct block_manager *bm, block_t block, enum block_lock how, void **data)
+{
+	return bm_lock_(bm, block, how, 1, data);
+}
+
+int bm_lock_no_read(struct block_manager *bm, block_t b, enum block_lock how, void **data)
+{
+	if (how != LOCK_WRITE)
+		return 0;
+
+	return bm_lock_(bm, b, how, 0, data);
+}
+
 
 int bm_unlock(struct block_manager *bm, block_t block, int changed)
 {
