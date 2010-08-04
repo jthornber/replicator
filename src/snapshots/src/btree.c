@@ -242,20 +242,24 @@ btree_lookup_ge(struct transaction_manager *tm, block_t root,
 /*
  * Splits a full node.  Returning the desired side, indicated by |key|, in
  * |node_block| and |node|.
- *
- * FIXME: rather than allocating 2 new blocks, we should shadow one of them
- * and allocate the other.
  */
 static int btree_split(struct transaction_manager *tm, block_t block, struct node *node,
 		       block_t parent_block, struct node *parent_node, unsigned parent_index,
 		       block_t *result, struct node **result_node)
 {
+	int inc;
 	unsigned nr_left, nr_right;
 	block_t left_block, right_block;
 	struct node *left, *right;
 
-	if (!tm_new_block(tm, &left_block, (void **) &left))
+	/* the parent still has a write lock, so it's safe to drop this lock */
+	tm_write_unlock(tm, block);
+
+	if (!tm_shadow_block(tm, block, &left_block, (void **) &left, &inc))
 		abort();
+
+	if (inc)
+		inc_children(tm, left);
 
 	if (!tm_new_block(tm, &right_block, (void **) &right))
 		abort();
@@ -263,10 +267,7 @@ static int btree_split(struct transaction_manager *tm, block_t block, struct nod
 	nr_left = node->header.nr_entries / 2;
 	nr_right = node->header.nr_entries - nr_left;
 
-	left->header.flags = node->header.flags;
 	left->header.nr_entries = nr_left;
-	memcpy(left->keys, node->keys, nr_left * sizeof(left->keys[0]));
-	memcpy(left->values, node->values, nr_left * sizeof(left->values[0]));
 
 	right->header.flags = node->header.flags;
 	right->header.nr_entries = nr_right;
@@ -314,8 +315,6 @@ static int btree_split(struct transaction_manager *tm, block_t block, struct nod
 
 	tm_write_unlock(tm, left_block);
 	tm_write_unlock(tm, right_block);
-	tm_write_unlock(tm, block);
-	tm_dec(tm, block);
 
 	return 1;
 }
