@@ -325,7 +325,7 @@ static int btree_insert_raw(struct transaction_manager *tm, block_t root, uint64
 {
         int i, parent_index = 0, inc;
         struct node *node, *parent_node = NULL;
-	block_t *block, parent_block = 0, new_root_ = 0, tmp_block;
+	block_t *block, parent_block = 0, new_root_ = 0, tmp_block, dup_block;
 
 	*new_root = root;
 	block = new_root;
@@ -350,6 +350,7 @@ static int btree_insert_raw(struct transaction_manager *tm, block_t root, uint64
 				assert(0);
 		}
 
+		dup_block = *block;
 		if (parent_block && parent_block != *block) /* FIXME: hack */
 			tm_write_unlock(tm, parent_block);
 
@@ -368,18 +369,18 @@ static int btree_insert_raw(struct transaction_manager *tm, block_t root, uint64
 			new_root_ = *block;
 
 		parent_index = i;
-		parent_block = *block;
+		parent_block = dup_block;
 		parent_node = node;
 		block = node->values + i;
         }
 
 	/*
-	 * FIXME: we can't refer to *block here, since the parent_block has
-	 * been unlocked (Valgrind spots this).
+	 * We can't refer to *block here, since the parent_block has been
+	 * unlocked (Valgrind spots this).  Hence the |dup_block| hack.
 	 */
 	if (new_root_)
 		*new_root = new_root_;
-	*leaf = *block;
+	*leaf = dup_block;
 	*leaf_node = node;
 
 	if (node->keys[i] != key)
