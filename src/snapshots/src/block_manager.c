@@ -208,6 +208,8 @@ block_manager_create(int fd, size_t block_size, block_t nr_blocks, unsigned cach
 	bm->fd = fd;
 	bm->block_size = block_size;
 	bm->nr_blocks = nr_blocks;
+	bm->read_count = 0;
+	bm->write_count = 0;
 	pthread_mutex_init(&bm->lock, NULL);
 	bm->blocks_allocated = 0;
 	list_init(&bm->lru_list);
