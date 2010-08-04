@@ -115,6 +115,42 @@ static void check_insert(struct transaction_manager *tm)
 	check_reference_counts(tm, &root, 1);
 }
 
+static void check_multiple_commits(struct transaction_manager *tm)
+{
+	unsigned i;
+	uint64_t value;
+	struct number_list *nl;
+	block_t root = 0;
+
+	tm_begin(tm);
+	if (!btree_empty(tm, &root))
+		abort();
+
+	i = 0;
+	list_iterate_items (nl, &randoms_) {
+		if (!btree_insert(tm, root, nl->key, nl->value, &root))
+			barf("insert");
+		if (i++ % 100 == 0) {
+			tm_commit(tm, root);
+			tm_begin(tm);
+		}
+	}
+
+	tm_commit(tm, root);
+	check_locks(tm);
+
+	list_iterate_items (nl, &randoms_) {
+		if (!btree_lookup_equal(tm, root, nl->key, &value))
+			barf("lookup");
+
+		assert(value == nl->value);
+	}
+	check_locks(tm);
+
+	check_reference_counts(tm, &root, 1);
+}
+
+
 static void check_insert_h(struct transaction_manager *tm)
 {
 	typedef uint64_t table_entry[5];
@@ -253,6 +289,7 @@ int main(int argc, char **argv)
 		void (*fn)(struct transaction_manager *);
 	} table_[] = {
 		{ "check_insert", check_insert },
+		{ "check_multiple_commits", check_multiple_commits },
 		{ "check_clone", check_clone },
 		{ "check_insert_h", check_insert_h }
 	};
