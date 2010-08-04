@@ -261,16 +261,17 @@ int main(int argc, char **argv)
 	struct block_manager *bm;
 	struct transaction_manager *tm;
 
-	populate_randoms(32);
+	populate_randoms(10000);
 	for (i = 0; i < sizeof(table_) / sizeof(*table_); i++) {
 		printf("running %s()\n", table_[i].name);
 
-		bm = block_manager_create(open_file(), BLOCK_SIZE, NR_BLOCKS);
+		bm = block_manager_create(open_file(), BLOCK_SIZE, NR_BLOCKS, 1024);
 		tm = tm_create(bm);
 
 		table_[i].fn(tm);
 
 		tm_destroy(tm);
+		bm_dump(bm);
 		block_manager_destroy(bm);
 	}
 	free_randoms(50);
