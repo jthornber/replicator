@@ -150,6 +150,46 @@ static void check_multiple_commits(struct transaction_manager *tm)
 	check_reference_counts(tm, &root, 1);
 }
 
+/*
+ * The above routine generates a lot of writes, because the keys are
+ * random.  This checks that contiguous keys create far fewer writes.
+ */
+static void check_multiple_commits_contiguous(struct transaction_manager *tm)
+{
+	int i;
+	uint64_t key, value;
+	struct number_list *nl;
+	block_t root = 0;
+
+	tm_begin(tm);
+	if (!btree_empty(tm, &root))
+		abort();
+
+	i = 0;
+	key = 0;
+	list_iterate_items (nl, &randoms_) {
+		if (!btree_insert(tm, root, key++, nl->value, &root))
+			barf("insert");
+		if (i++ % 100 == 0) {
+			tm_commit(tm, root);
+			tm_begin(tm);
+		}
+	}
+
+	tm_commit(tm, root);
+	check_locks(tm);
+
+	key = 0;
+	list_iterate_items (nl, &randoms_) {
+		if (!btree_lookup_equal(tm, root, key++, &value))
+			barf("lookup");
+
+		assert(value == nl->value);
+	}
+	check_locks(tm);
+
+	check_reference_counts(tm, &root, 1);
+}
 
 static void check_insert_h(struct transaction_manager *tm)
 {
@@ -290,6 +330,7 @@ int main(int argc, char **argv)
 	} table_[] = {
 		{ "check_insert", check_insert },
 		{ "check_multiple_commits", check_multiple_commits },
+		{ "check_multiple_commits_contiguous", check_multiple_commits_contiguous },
 		{ "check_clone", check_clone },
 		{ "check_insert_h", check_insert_h }
 	};
