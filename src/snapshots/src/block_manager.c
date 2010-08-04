@@ -34,6 +34,7 @@ struct block_manager {
 	unsigned write_count;
 
 	pthread_mutex_t lock;	/* protects both lru and hash */
+	unsigned blocks_allocated;
 	struct list lru_list;
 	struct list locked_list;
 
@@ -43,7 +44,7 @@ struct block_manager {
 	struct list *buckets;
 };
 
-static struct block *alloc_block(size_t block_size)
+static struct block *alloc_block(struct block_manager *bm, size_t block_size)
 {
 	struct block *b = malloc(sizeof(*b));
 	if (!b)
@@ -59,10 +60,12 @@ static struct block *alloc_block(size_t block_size)
 	b->dirty = 0;
 	b->read_count = 0;
 	b->write_count = 0;
+
+	bm->blocks_allocated++;  /* FIXME: unprotected */
 	return b;
 }
 
-static void free_block(struct block *b)
+static void free_block(struct block_manager *bm, struct block *b)
 {
 	/*
 	 * No locks should be held at this point.
@@ -74,6 +77,7 @@ static void free_block(struct block *b)
 	list_del(&b->hash);
 	free(b->data);
 	free(b);
+	bm->blocks_allocated--;  /* FIXME: unprotected */
 }
 
 static void add_to_lru(struct block_manager *bm, struct block *b)
@@ -170,12 +174,23 @@ static unsigned next_power_of_2(unsigned n)
 	return p;
 }
 
+static int read_block(struct block_manager *bm, struct block *b)
+{
+	if ((lseek(bm->fd, b->where * bm->block_size, SEEK_SET) < 0) ||
+	    (read(bm->fd, b->data, bm->block_size) < 0))
+		return 0;
+
+	bm->read_count++; /* FIXME: unprotected */
+	return 1;
+}
+
 static int write_block(struct block_manager *bm, struct block *b)
 {
-	bm->write_count++;	/* FIXME: unprotected */
 	if ((lseek(bm->fd, b->where * bm->block_size, SEEK_SET) < 0) ||
 	    (write(bm->fd, b->data, bm->block_size) < 0))
 		return 0;
+
+	bm->write_count++;	/* FIXME: unprotected */
 	return 1;
 }
 
@@ -193,6 +208,7 @@ block_manager_create(int fd, size_t block_size, block_t nr_blocks, unsigned cach
 	bm->block_size = block_size;
 	bm->nr_blocks = nr_blocks;
 	pthread_mutex_init(&bm->lock, NULL);
+	bm->blocks_allocated = 0;
 	list_init(&bm->lru_list);
 	list_init(&bm->locked_list);
 
@@ -218,7 +234,7 @@ void block_manager_destroy(struct block_manager *bm)
 
 	list_iterate_safe (l, tmp, &bm->lru_list) {
 		struct block *b = list_struct_base(l, struct block, lru);
-		free_block(b);
+		free_block(bm, b);
 	}
 
 	free(bm);
@@ -243,24 +259,17 @@ int bm_lock(struct block_manager *bm, block_t block, enum block_lock how, void *
 		*data = b->data;
 		lock_block(bm, b, how);
 	} else {
-		b = alloc_block(bm->block_size);
+		b = alloc_block(bm, bm->block_size);
 		if (!b)
 			return 0;
 
-		if (lseek(bm->fd, block * bm->block_size, SEEK_SET) < 0) {
-			free_block(b);
-			return 0;
-		}
-
-		bm->read_count++; /* FIXME: unprotected */
-		if (read(bm->fd, b->data, bm->block_size) < 0) {
-			free_block(b);
-			return 0;
-		}
-
 		b->where = block;
-		*data = b->data;
+		if (!read_block(bm, b)) {
+			free_block(bm, b);
+			return 0;
+		}
 
+		*data = b->data;
 		insert_block(bm, b);
 		lock_block(bm, b, how);
 	}
@@ -304,7 +313,6 @@ int bm_flush(struct block_manager *bm)
 			else
 				r = 0;
 		}
-		free_block(b);	/* FIXME: leave on the lru list so it can be reused */
 	}
 	pthread_mutex_unlock(&bm->lock);
 
