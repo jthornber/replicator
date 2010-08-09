@@ -43,6 +43,9 @@ struct block_manager {
 	unsigned cache_size;
 	unsigned nr_buckets;
 	struct list *buckets;
+
+	/* debug tracing */
+	FILE *trace;
 };
 
 static struct block *alloc_block(struct block_manager *bm, size_t block_size)
@@ -104,10 +107,13 @@ static void lock_block(struct block_manager *bm, struct block *b, enum block_loc
 {
 	switch (how) {
 	case LOCK_READ:
+		assert(!b->write_count);
 		b->read_count++;
 		break;
 
 	case LOCK_WRITE:
+		assert(!b->read_count);
+		assert(!b->write_count);
 		if (b->write_count)
 			abort();
 		b->write_count++;
@@ -184,6 +190,10 @@ static int read_block(struct block_manager *bm, struct block *b)
 		return 0;
 
 	bm->read_count++; /* FIXME: unprotected */
+
+	if (bm->trace)
+		fprintf(bm->trace, "read %u\n", (unsigned) b->where);
+
 	return 1;
 }
 
@@ -194,6 +204,10 @@ static int write_block(struct block_manager *bm, struct block *b)
 		return 0;
 
 	bm->write_count++;	/* FIXME: unprotected */
+
+	if (bm->trace)
+		fprintf(bm->trace, "write %u\n", (unsigned) b->where);
+
 	return 1;
 }
 
@@ -227,12 +241,17 @@ block_manager_create(int fd, size_t block_size, block_t nr_blocks, unsigned cach
 	for (i = 0; i < bm->nr_buckets; i++)
 		list_init(bm->buckets + i);
 
+	bm->trace = NULL;
+
 	return bm;
 }
 
 void block_manager_destroy(struct block_manager *bm)
 {
 	struct list *l, *tmp;
+
+	if (bm->trace)
+		fclose(bm->trace);
 
 	pthread_mutex_destroy(&bm->lock);
 
@@ -373,6 +392,20 @@ unsigned bm_write_locks_held(struct block_manager *bm)
 	return count_locks(bm, LOCK_WRITE);
 }
 
+int bm_start_io_trace(struct block_manager *bm, const char *file)
+{
+	assert(!bm->trace);
+	bm->trace = fopen(file, "w");
+	assert(bm->trace);
+	fprintf(bm->trace, "nr_blocks %u\n", (unsigned) bm->nr_blocks);
+	return 1;
+}
+
+int bm_io_mark(struct block_manager *bm, const char *token)
+{
+	fprintf(bm->trace, "mark \"%s\"\n", token);
+	return 1;
+}
 
 /*----------------------------------------------------------------*/
 

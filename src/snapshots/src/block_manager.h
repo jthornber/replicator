@@ -36,6 +36,9 @@ void bm_dump(struct block_manager *bm);
 unsigned bm_read_locks_held(struct block_manager *bm);
 unsigned bm_write_locks_held(struct block_manager *bm);
 
+int bm_start_io_trace(struct block_manager *bm, const char *file);
+int bm_io_mark(struct block_manager *bm, const char *token);
+
 /*----------------------------------------------------------------*/
 
 #endif
