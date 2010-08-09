@@ -58,6 +58,9 @@ static int find_snapshot(struct pstore *ps, dev_t snap, struct snapshot_list **r
 	return 0;
 }
 
+static uint64_t snap_time(dev_t d);
+static uint64_t snap_dev(struct pstore *ps, dev_t dev); /* FIXME: rename to snap_origin ? */
+
 /*----------------------------------------------------------------*/
 
 void destroy(void *context)
@@ -67,7 +70,6 @@ void destroy(void *context)
 
 	tm_destroy(ps->tm);
 	block_manager_destroy(ps->bm);
-	dev_close(ps->fd);
 
 	list_iterate_items_safe (sl, tmp, &ps->snaps)
 		free(sl);
