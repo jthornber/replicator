@@ -40,7 +40,7 @@ struct transaction_manager *tm_create(struct block_manager *bm)
 	struct transaction_manager *tm = malloc(sizeof(*tm));
 	if (tm) {
 		tm->bm = bm;
-		tm->sm = space_map_create(bm_nr_blocks(bm));
+		tm->sm = sm_new(tm, bm_nr_blocks(bm));
 		tm->t = NULL;
 		if (!tm->sm) {
 			free(tm);
@@ -76,6 +76,9 @@ int tm_begin(struct transaction_manager *tm)
 
 int tm_commit(struct transaction_manager *tm, block_t root)
 {
+	block_t sm_root;
+	sm_flush(tm->sm, &sm_root);
+
 	bm_flush(tm->bm);
 	bm_unlock(tm->bm, root, 1);
 	bm_flush(tm->bm);
