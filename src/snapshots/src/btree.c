@@ -416,10 +416,8 @@ int btree_insert_h(struct transaction_manager *tm, block_t root,
 		if (level == last_level) {
 			if (need_insert)
 				insert_at(leaf_node, index, keys[level], value);
-			else {
-				fprintf(stderr, "overwriting value\n");
+			else
 				leaf_node->values[index] = value;
-			}
 		} else {
 			if (need_insert) {
 				block_t new_root;
@@ -459,6 +457,7 @@ int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone)
 	memcpy(clone_node, orig_node, sizeof(*clone_node));
 	tm_read_unlock(tm, root);
 	inc_children(tm, clone_node);
+	tm_write_unlock(tm, *clone);
 
 	return 1;
 }
