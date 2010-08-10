@@ -74,14 +74,18 @@ int tm_begin(struct transaction_manager *tm)
 	return 1;
 }
 
+int tm_pre_commit(struct transaction_manager *tm, block_t *space_map_root)
+{
+	sm_flush(tm->sm, space_map_root);
+	bm_flush(tm->bm, 0);
+	return 1;
+}
+
 int tm_commit(struct transaction_manager *tm, block_t root)
 {
-	block_t sm_root;
-	sm_flush(tm->sm, &sm_root);
-
-	bm_flush(tm->bm);
+	bm_flush(tm->bm, 1);
 	bm_unlock(tm->bm, root, 1);
-	bm_flush(tm->bm);
+	bm_flush(tm->bm, 1);
 
 	/* destroy the transaction */
 	pool_destroy(tm->t->mem);

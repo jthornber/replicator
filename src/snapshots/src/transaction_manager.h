@@ -19,11 +19,21 @@ void tm_destroy(struct transaction_manager *tm);
 int tm_begin(struct transaction_manager *tm);
 
 /*
- * |root| will be committed last.  You shouldn't use more than the first
- * 512 bytes of |root| if you wish to survive a power failure.  You *must*
- * have a write lock held on |root|.  The commit will drop the write lock.
+ * We use a 2 phase commit here.
+ *
+ * i) In the first phase the block manager is told to start flushing, and
+ * the changes to the space map are written to disk.  The new root block
+ * for the space map is returned for inclusion in the clients superblock.
+ *
+ * ii) |root| will be committed last.  You shouldn't use more than the
+ * first 512 bytes of |root| if you wish to survive a power failure.  You
+ * *must* have a write lock held on |root|.  The commit will drop the write
+ * lock.
  */
+int tm_pre_commit(struct transaction_manager *tm, block_t *space_map_root);
 int tm_commit(struct transaction_manager *tm, block_t root);
+
+/* FIXME: not implemented, possibly not needed. */
 int tm_rollback(struct transaction_manager *tm);
 
 /*
@@ -40,7 +50,7 @@ int tm_rollback(struct transaction_manager *tm);
  * optimise requests for a shadow of a shadow to a no-op.
  *
  * The |inc_children| flag is used to tell the caller whether they need to
- * adjust reference counts for children at all.
+ * adjust reference counts for children.
  */
 int tm_alloc_block(struct transaction_manager *tm, block_t *new);
 int tm_new_block(struct transaction_manager *tm, block_t *new, void **data);
