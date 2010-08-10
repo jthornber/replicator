@@ -199,7 +199,7 @@ static enum io_result snapshot_exception(struct pstore *ps,
 
 	to->dev = ps->dev;
 	to->block = cow_dest;
-	return IO_NEED_COPY;
+	return IO_MAPPED;
 }
 
 enum io_result snapshot_map(void *context,
