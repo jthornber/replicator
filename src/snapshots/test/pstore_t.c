@@ -11,6 +11,8 @@
 
 #define NR_BLOCKS 102400
 
+/*----------------------------------------------------------------*/
+
 static int open_file()
 {
 	int i;
@@ -154,7 +156,7 @@ int main(int argc, char **argv)
 		from.dev = snap1_dev;
 		from.block = 13;
 		r = estore_snapshot_map(ps, &from, WRITE, &to1);
-		assert(r == IO_NEED_COPY);
+		assert(r == IO_MAPPED);
 		assert(to1.dev == store_dev);
 		assert(to1.block != to3.block);
 
