@@ -10,10 +10,6 @@
 
 /*----------------------------------------------------------------*/
 
-struct device {
-	const char *uuid;
-};
-
 struct snapshot_detail {
 	dev_t snap;
 	dev_t origin;
