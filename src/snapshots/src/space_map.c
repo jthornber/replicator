@@ -18,11 +18,14 @@
 /*----------------------------------------------------------------*/
 
 /* we have a little hash table of the reference count changes */
-struct delta_entry {
+struct cache_entry {
 	struct list lru;
 	struct list hash;
+
 	block_t block;
-	int32_t delta;
+	uint32_t ref_count;	/* Ref count from last transaction */
+	int32_t delta;		/* how this has changed within the current transaction */
+	int32_t unwritten;      /* what still needs to be written to the current transaction */
 };
 
 #define NR_BUCKETS 1024
@@ -41,48 +44,74 @@ struct space_map {
 };
 
 /* FIXME: we're hashing blocks elsewhere, factor out the hash fn */
-static unsigned hash_delta(block_t b)
+static unsigned hash_block(block_t b)
 {
 	return (b * PRIME) & MASK;
 }
 
-static struct delta_entry *find_delta(struct space_map *sm, block_t b)
+static struct cache_entry *find_entry(struct space_map *sm, block_t b)
 {
 	struct list *l;
-	list_iterate (l, sm->buckets + hash_delta(b)) {
-		struct delta_entry *de = list_struct_base(l, struct delta_entry, hash);
+	list_iterate (l, sm->buckets + hash_block(b)) {
+		struct cache_entry *ce = list_struct_base(l, struct cache_entry, hash);
 
-		if (de->block == b)
-			return de;
+		if (ce->block == b)
+			return ce;
 	}
 
 	return NULL;
 }
 
-static int add_delta(struct space_map *sm, block_t b, int32_t delta)
+/*
+ * Only call this if you know the entry is _not_ already present.
+ */
+static struct cache_entry *add_entry(struct space_map *sm, block_t b, uint32_t ref_count)
 {
-	struct delta_entry *de = find_delta(sm, b);
+	struct cache_entry *ce = malloc(sizeof(*ce));
+	if (!ce)
+		return NULL;
 
-	if (!de) {
-		de = malloc(sizeof(*de));
-		if (!de)
-			return 0;
-
-		list_init(&de->lru);
-		list_add(sm->buckets + hash_delta(b), &de->hash);
-		de->block = b;
-		de->delta = 0;
-	}
-
-	list_move(&sm->deltas, &de->lru);
-	de->delta += delta;
-	return 1;
+	list_init(&ce->lru);
+	list_add(sm->buckets + hash_block(b), &ce->hash);
+	ce->block = b;
+	ce->ref_count = ref_count;
+	ce->delta = 0;
+	ce->unwritten = 0;
+	return ce;
 }
 
-static int32_t get_delta(struct space_map *sm, block_t b)
+static int add_delta(struct space_map *sm, block_t b, int32_t delta)
 {
-	struct delta_entry *de = find_delta(sm, b);
-	return de ? de->delta : 0;
+	struct cache_entry *ce = find_entry(sm, b);
+
+	if (!ce) {
+		uint64_t ref_count;
+		if (sm->initialised) {
+			switch (btree_lookup_equal(sm->tm, sm->root, b, &ref_count)) {
+			case LOOKUP_ERROR:
+				return 0;
+
+			case LOOKUP_NOT_FOUND:
+				ref_count = 0;
+				break;
+
+			case LOOKUP_FOUND:
+				break;
+			}
+		}
+
+		ce = add_entry(sm, b, ref_count);
+		if (!ce)
+			return 0;
+	}
+
+	ce->delta += delta;
+	ce->unwritten += delta;
+
+	if (ce->unwritten)
+		list_move(&sm->deltas, &ce->lru);
+
+	return 1;
 }
 
 static struct space_map *sm_alloc(struct transaction_manager *tm, block_t nr_blocks)
@@ -130,8 +159,8 @@ void sm_close(struct space_map *sm)
 {
 	struct list *l, *tmp;
 	list_iterate_safe (l, tmp, &sm->deltas) {
-		struct delta_entry *de = list_struct_base(l, struct delta_entry, hash);
-		free(de);
+		struct cache_entry *ce = list_struct_base(l, struct cache_entry, lru);
+		free(ce);
 	}
 
 	free(sm);
@@ -149,22 +178,39 @@ int sm_new_block(struct space_map *sm, block_t *b)
 	block_t i;
 
 	for (i = 0; i < sm->nr_blocks; i++) {
-		uint64_t ref_count = 0;
-		int32_t delta;
+		struct cache_entry *ce;
 
 		next_block(sm);
-		delta = get_delta(sm, sm->last_allocated);
-		if (delta > 0)
-			continue;
 
-		if (sm->initialised)
-			if (btree_lookup_equal(sm->tm, sm->root,
-					       sm->last_allocated, &ref_count) == LOOKUP_ERROR)
-				return 0;
+		ce = find_entry(sm, sm->last_allocated);
 
-		if (ref_count + delta == 0) {
-			if (!sm_inc_block(sm, sm->last_allocated))
-				return 0;
+		if (!ce) {
+			uint64_t ref_count = 0;
+			if (sm->initialised) {
+				switch (btree_lookup_equal(sm->tm, sm->root,
+							   sm->last_allocated, &ref_count)) {
+				case LOOKUP_ERROR:
+					return 0;
+
+				case LOOKUP_NOT_FOUND:
+					ref_count = 0;
+					break;
+
+				case LOOKUP_FOUND:
+					break;
+				}
+			}
+
+			if (ref_count > 0)
+				continue;
+
+			ce = add_entry(sm, sm->last_allocated, 0);
+		}
+
+		if (ce->ref_count + ce->delta == 0) {
+			list_move(&sm->deltas, &ce->lru);
+			ce->delta++;
+			ce->unwritten++;
 			*b = sm->last_allocated;
 			return 1;
 		}
@@ -175,7 +221,6 @@ int sm_new_block(struct space_map *sm, block_t *b)
 
 int sm_inc_block(struct space_map *sm, block_t b)
 {
-	assert(b);
 	return add_delta(sm, b, 1);
 }
 
@@ -187,50 +232,52 @@ int sm_dec_block(struct space_map *sm, block_t b)
 uint32_t sm_get_count(struct space_map *sm, block_t b)
 {
 	uint64_t rc = 0;
+	struct cache_entry *ce = find_entry(sm, b);
 
-	if (sm->initialised && !btree_lookup_equal(sm->tm, sm->root, b, &rc))
-		abort();
+	if (ce)
+		return ce->ref_count + ce->delta;
+	else {
+		if (sm->initialised)
+			switch (btree_lookup_equal(sm->tm, sm->root, b, &rc)) {
+			case LOOKUP_ERROR:
+				abort();
 
-	return rc + get_delta(sm, b);
+			case LOOKUP_NOT_FOUND:
+				rc = 0;
+				break;
+
+			case LOOKUP_FOUND:
+				break;
+			}
+
+		return rc;
+	}
 }
 
-static int flush_once(struct space_map *sm)
+static int flush_once(struct space_map *sm, block_t *new_root)
 {
-	struct list head, *l;
-	block_t root = sm->root;
+	struct list head, *l, *tmp;
 
 	list_init(&head);
 	list_splice(&head, &sm->deltas);
+	assert(list_empty(&sm->deltas));
 
-	list_iterate (l, &head) {
-		struct delta_entry *de = list_struct_base(l, struct delta_entry, hash);
-		uint32_t shadow = de->delta;
-		uint64_t value;
+	list_iterate_safe (l, tmp, &head) {
+		struct cache_entry *ce = list_struct_base(l, struct cache_entry, lru);
+		uint32_t shadow = ce->unwritten;
 
-		switch (btree_lookup_equal(sm->tm, root, de->block, &value)) {
-		case LOOKUP_ERROR:
-			return 0;
-
-		case LOOKUP_NOT_FOUND:
-			if (!btree_insert(sm->tm, root, de->block, shadow, &root))
-				return 0;
-			break;
-
-		case LOOKUP_FOUND:
-			if (!btree_insert(sm->tm, root, de->block, shadow + value, &root))
-				return 0;
-			break;
-		}
+		assert(ce->unwritten);
+		if (!btree_insert(sm->tm, *new_root, ce->block, ce->ref_count + shadow, new_root))
+			abort();
 
 		/*
-		 * The delta may have increased as a result of the btree
-		 * operations above.  So we subtract shadow, rather than
-		 * setting to 0.
+		 * The |unwritten| value may have increased as a result of
+		 * the btree insert above.  So we subtract |shadow|,
+		 * rather than setting to 0.
 		 */
-		de->delta -= shadow;
+		ce->unwritten -= shadow;
 	}
 
-	sm->root = root;
 	return 1;
 }
 
@@ -240,73 +287,35 @@ int sm_flush(struct space_map *sm, block_t *new_root)
 	if (!sm->initialised) {
 		if (!btree_empty(sm->tm, &sm->root))
 			return 0;
-		sm->initialised = 1;
 	}
 
+	*new_root = sm->root;
 	while (!list_empty(&sm->deltas))
-		if (!flush_once(sm))
+		if (!flush_once(sm, new_root))
 			return 0;
 
+	/* wipe the cache completely */
 	for (i = 0; i < NR_BUCKETS; i++) {
 		struct list *l, *tmp;
 		list_iterate_safe (l, tmp, sm->buckets + i) {
-			struct delta_entry *de = list_struct_base(l, struct delta_entry, hash);
-			free(de);
+			struct cache_entry *ce = list_struct_base(l, struct cache_entry, hash);
+			free(ce);
 		}
 		list_init(sm->buckets + i);
 	}
 
-	*new_root = sm->root;
+	sm->root = *new_root;
+	sm->initialised = 1;
 	return 1;
 }
 
-#if 0
-void sm_dump(struct space_map *sm)
+static void ignore_leaf(uint64_t leaf, uint32_t *ref_counts)
 {
-	size_t len = sm->nr_blocks * sizeof(uint32_t);
-	uint32_t *bins = malloc(len), i;
-
-	assert(bins);
-
-	memset(bins, 0, len);
-	for (i = 0; i < sm->nr_blocks; i++)
-		bins[sm->ref_count[i]]++;
-
-
-	printf("space map reference count counts:\n");
-	for (i = 0; i < sm->nr_blocks; i++)
-		if (bins[i])
-			printf("    %u: %u\n", i, bins[i]);
 }
 
-int sm_equal(struct space_map *sm1, struct space_map *sm2)
+int sm_walk(struct space_map *sm, uint32_t *ref_counts)
 {
-	unsigned i;
-
-	if (sm1->nr_blocks != sm2->nr_blocks)
-		return 0;
-
-	for (i = 0; i < sm1->nr_blocks; i++)
-		if (sm1->ref_count[i] != sm2->ref_count[i])
-			return 0;
-
-	return 1;
+	return btree_walk(sm->tm, ignore_leaf, sm->root, ref_counts);
 }
 
-void sm_dump_comparison(struct space_map *sm1, struct space_map *sm2)
-{
-	unsigned i;
-
-	if (sm1->nr_blocks != sm2->nr_blocks) {
-		printf("number of block differ %u/%u\n",
-		       (unsigned) sm1->nr_blocks, (unsigned) sm2->nr_blocks);
-		return;
-	}
-
-	for (i = 0; i < sm1->nr_blocks; i++)
-		if (sm1->ref_count[i] != sm2->ref_count[i])
-			printf("counts for block %u differ %u/%u\n",
-			       i, (unsigned) sm1->ref_count[i], (unsigned) sm2->ref_count[i]);
-}
-#endif
 /*----------------------------------------------------------------*/

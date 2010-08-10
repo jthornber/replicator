@@ -56,14 +56,16 @@ int sm_inc_block(struct space_map *sm, block_t b);
 int sm_dec_block(struct space_map *sm, block_t b);
 uint32_t sm_get_count(struct space_map *sm, block_t b);
 
+/*
+ * Fills out the root of the new on disk space map, so the caller can make
+ * a note of it in their top level node.
+ */
 int sm_flush(struct space_map *sm, block_t *new_root);
 
 /*----------------------------------------------------------------*/
 
-/* Debug only */
-void sm_dump(struct space_map *sm);
-int sm_equal(struct space_map *sm1, struct space_map *sm2);
-void sm_dump_comparison(struct space_map *sm1, struct space_map *sm2);
+/* debug */
+int sm_walk(struct space_map *sm, uint32_t *ref_counts);
 
 /*----------------------------------------------------------------*/
 
