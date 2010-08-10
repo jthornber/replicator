@@ -383,7 +383,7 @@ static int btree_insert_raw(struct transaction_manager *tm, block_t root, uint64
 	*leaf = dup_block;
 	*leaf_node = node;
 
-	if (node->keys[i] != key)
+	if (i < 0 || node->keys[i] != key)
 		i++;
 
 	*index = i;
