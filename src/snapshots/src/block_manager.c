@@ -339,7 +339,7 @@ int bm_unlock(struct block_manager *bm, block_t block, int changed)
 	return 1;
 }
 
-int bm_flush(struct block_manager *bm)
+int bm_flush(struct block_manager *bm, int block)
 {
 	/*
 	 * Run through the lru list writing any dirty blocks.  We ignore
