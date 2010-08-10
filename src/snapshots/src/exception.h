@@ -137,7 +137,7 @@ estore_begin(struct exception_store *es)
 static inline int
 estore_commit(struct exception_store *es)
 {
-	return es->ops->begin(es->context);
+	return es->ops->commit(es->context);
 }
 
 static inline
