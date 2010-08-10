@@ -96,12 +96,14 @@ int btree_insert_h(struct transaction_manager *tm, block_t root,
  * are they blocks to be referenced or something else ?  So |leaf_fn| is
  * passed in to make this decision.
  */
-typedef void (*leaf_fn)(uint64_t leaf_value, struct space_map *sm);
+typedef void (*leaf_fn)(uint64_t leaf_value, uint32_t *ref_counts);
 int btree_walk(struct transaction_manager *tm, leaf_fn lf,
-	       block_t root, struct space_map *sm);
+	       block_t root, uint32_t *ref_counts);
 
+#if 0
 int btree_walk_h(struct transaction_manager *tm, leaf_fn lf,
 		 block_t root, unsigned count, struct space_map *sm);
+#endif
 
 /*----------------------------------------------------------------*/
 

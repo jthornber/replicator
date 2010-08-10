@@ -463,22 +463,22 @@ int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone)
 }
 
 int btree_walk(struct transaction_manager *tm, leaf_fn lf,
-	       block_t root, struct space_map *sm)
+	       block_t root, uint32_t *ref_counts)
 {
 	unsigned i;
 	struct node *n;
 
-	sm_inc_block(sm, root);
+	ref_counts[root]++;
 	if (!tm_read_lock(tm, root, (void **) &n)) {
 		abort();
 	}
 
 	if (n->header.flags & INTERNAL_NODE)
 		for (i = 0; i < n->header.nr_entries; i++)
-			btree_walk(tm, lf, n->values[i], sm);
+			btree_walk(tm, lf, n->values[i], ref_counts);
 	else
 		for (i = 0; i < n->header.nr_entries; i++)
-			lf(n->values[i], sm);
+			lf(n->values[i], ref_counts);
 
 	tm_read_unlock(tm, root);
 
