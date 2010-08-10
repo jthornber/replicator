@@ -16,6 +16,13 @@ struct transaction_manager;
 struct transaction_manager *tm_create(struct block_manager *bm);
 void tm_destroy(struct transaction_manager *tm);
 
+/*
+ * The client may want to manage some blocks directly (eg, the
+ * superblocks).  Call this immediately after construction to reserve
+ * blocks.
+ */
+int tm_reserve_block(struct transaction_manager *tm, block_t b);
+
 int tm_begin(struct transaction_manager *tm);
 
 /*

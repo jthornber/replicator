@@ -57,6 +57,11 @@ void tm_destroy(struct transaction_manager *tm)
 	free(tm);
 }
 
+int tm_reserve_block(struct transaction_manager *tm, block_t b)
+{
+	return sm_inc_block(tm->sm, b);
+}
+
 int tm_begin(struct transaction_manager *tm)
 {
 	struct pool *mem;
@@ -119,6 +124,11 @@ static int is_new_block(struct transaction *t, block_t orig)
 			return 1;
 
 	return 0;
+}
+
+int tm_alloc_block(struct transaction_manager *tm, block_t *new)
+{
+	return sm_new_block(tm->sm, new);
 }
 
 int tm_new_block(struct transaction_manager *tm, block_t *new, void **data)
