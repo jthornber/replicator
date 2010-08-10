@@ -1,9 +1,10 @@
 #include "persistent_estore.h"
 #include "transaction_manager.h"
 #include "btree.h"
-#include "device.h"
 
 #include "datastruct/list.h"
+
+#include <string.h>
 
 /*----------------------------------------------------------------*/
 
@@ -13,6 +14,7 @@ struct top_level {
 	block_t snapshot_maps;	/* a btree of snapshot maps */
 };
 
+/* FIXME: this needs to be stored on the disk */
 struct snapshot_list {
 	struct list list;
 	dev_t snap;
@@ -321,7 +323,7 @@ int new_snapshot(void *context, dev_t origin, dev_t snap)
 		if (!btree_clone(ps->tm, orig_root, &new_tree))
 			abort();
 	} else {
-		sd->creation_time = ps->time++;
+		sd->creation_time = ++ps->time;
 		if (!btree_empty(ps->tm, &new_tree))
 			abort();
 	}
@@ -342,6 +344,8 @@ struct exception_ops ops = {
 	.get_block_size = get_block_size,
 	.get_snapshot_count = get_snapshot_count,
 	.get_snapshot_detail = get_snapshot_detail,
+	.begin = begin,
+	.commit = commit,
 	.snapshot_map = snapshot_map,
 	.origin_write = origin_write,
 	.new_snapshot = new_snapshot,
@@ -352,15 +356,13 @@ struct exception_ops ops = {
 
 static int create_top_level(struct pstore *ps)
 {
-	struct top_level *tl;
+	begin(ps);
 
-	if (!bm_lock(ps->bm, ps->superblock, WRITE, (void **) &ps->tl))
+	memset(ps->tl, 0, sizeof(*ps->tl));
+	if (!btree_empty(ps->tm, &ps->tl->origin_maps))
 		abort();
 
-	if (!btree_empty(ps->tm, &tl->origin_maps))
-		abort();
-
-	if (!btree_empty(ps->tm, &tl->snapshot_maps))
+	if (!btree_empty(ps->tm, &ps->tl->snapshot_maps))
 		abort();
 
 	return commit(ps);
@@ -381,6 +383,7 @@ struct exception_store *persistent_store_create(struct block_manager *bm, dev_t 
 
 		ps->time = 0;
 		ps->superblock = 0;
+		tm_reserve_block(ps->tm, ps->superblock);
 		ps->tl = NULL;
 
 		list_init(&ps->snaps);
