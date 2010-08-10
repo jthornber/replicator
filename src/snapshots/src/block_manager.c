@@ -330,10 +330,15 @@ int bm_unlock(struct block_manager *bm, block_t block, int changed)
 	if (!b->read_count && !b->write_count)
 		return 0;
 
-	if (changed) {
-		if (b->type != LOCK_WRITE)
-			return 0;
-		b->dirty = 1;
+	switch (b->type) {
+	case LOCK_WRITE:
+		if (changed)
+			b->dirty |= 1;
+		break;
+
+	case LOCK_READ:
+		assert(!changed);
+		break;
 	}
 	unlock_block(bm, b);
 	return 1;
