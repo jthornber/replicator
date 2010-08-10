@@ -90,7 +90,6 @@ void destroy(void *context)
 	struct snapshot_list *sl, *tmp;
 
 	tm_destroy(ps->tm);
-	block_manager_destroy(ps->bm);
 
 	list_iterate_items_safe (sl, tmp, &ps->snaps)
 		free(sl);

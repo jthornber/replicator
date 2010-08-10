@@ -43,12 +43,15 @@ int main(int argc, char **argv)
 	if (!ps)
 		abort();
 
+	bm_start_io_trace(bm, "pstore_t.trace");
+
 	/* create snapshot */
 	estore_begin(ps);
 	if (!estore_new_snapshot(ps, origin_dev, snap1_dev))
 		abort();
 
 	estore_commit(ps);
+	bm_io_mark(bm, "commit");
 
 	/* send some write io to the origin to trigger exceptions */
 	estore_begin(ps);
@@ -68,6 +71,7 @@ int main(int argc, char **argv)
 		assert(to2.block == to1.block);
 	}
 	estore_commit(ps);
+	bm_io_mark(bm, "commit");
 
 	/* check the mapping stuck */
 	estore_begin(ps);
@@ -80,6 +84,7 @@ int main(int argc, char **argv)
 		assert(to2.block == to1.block);
 	}
 	estore_commit(ps);
+	bm_io_mark(bm, "commit");
 
 	/* now we create a second snapshot ... */
 	estore_begin(ps);
@@ -88,6 +93,7 @@ int main(int argc, char **argv)
 			abort();
 	}
 	estore_commit(ps);
+	bm_io_mark(bm, "commit");
 
 	/* and trigger another exception with a write to the same block */
 	estore_begin(ps);
@@ -101,6 +107,7 @@ int main(int argc, char **argv)
 		assert(to2.block != to1.block);
 	}
 	estore_commit(ps);
+	bm_io_mark(bm, "commit");
 
 	/* check a read from snaps */
 	estore_begin(ps);
@@ -122,6 +129,7 @@ int main(int argc, char **argv)
 		assert(to3.block == to2.block);
 	}
 	estore_commit(ps);
+	bm_io_mark(bm, "commit");
 
 	/* snap a snap */
 	estore_begin(ps);
@@ -138,6 +146,7 @@ int main(int argc, char **argv)
 		assert(to3.block == to1.block);
 	}
 	estore_commit(ps);
+	bm_io_mark(bm, "commit");
 
 	/* write to snap1 */
 	estore_begin(ps);
@@ -166,8 +175,10 @@ int main(int argc, char **argv)
 		assert(to3.block == to1.block);
 	}
 	estore_commit(ps);
+	bm_io_mark(bm, "commit");
 
 	estore_destroy(ps);
+	block_manager_destroy(bm);
 
 	return 0;
 }
