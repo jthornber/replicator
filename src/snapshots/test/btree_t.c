@@ -50,27 +50,28 @@ static void free_randoms()
 	pool_destroy(mem_);
 }
 
-static void ignore_leaf(uint64_t leaf, struct space_map *sm)
+static void ignore_leaf(uint64_t leaf, uint32_t *ref_counts)
 {
 }
-
 
 void check_reference_counts(struct transaction_manager *tm,
 			    block_t *roots, unsigned count)
 {
-	unsigned i;
+	int i;
+	block_t b, nr_blocks = bm_nr_blocks(tm_get_bm(tm));
+	uint32_t *ref_counts = malloc(sizeof(*ref_counts) * nr_blocks);
+        struct space_map *sm = tm_get_sm(tm);
 
-	struct space_map *sm = space_map_create(bm_nr_blocks(tm_get_bm(tm)));
-	if (!sm)
-		abort();
+	assert(ref_counts);
 
+	memset(ref_counts, 0, sizeof(*ref_counts) * nr_blocks);
 	for (i = 0; i < count; i++)
-		btree_walk(tm, ignore_leaf, roots[i], sm);
+		btree_walk(tm, ignore_leaf, roots[i], ref_counts);
+	sm_walk(sm, ref_counts);
 
-	if (!sm_equal(tm_get_sm(tm), sm)) {
-		sm_dump_comparison(tm_get_sm(tm), sm);
-		abort();
-	}
+	for (b = 0; b < nr_blocks; b++)
+		if (ref_counts[b] != sm_get_count(sm, b))
+			abort();
 }
 
 static void check_locks(struct transaction_manager *tm)
@@ -122,6 +123,9 @@ static void check_multiple_commits(struct transaction_manager *tm)
 	struct number_list *nl;
 	block_t root = 0;
 
+	struct block_manager *bm = tm_get_bm(tm);
+	bm_start_io_trace(bm, "multiple_commits.trace");
+
 	tm_begin(tm);
 	if (!btree_empty(tm, &root))
 		abort();
@@ -131,11 +135,13 @@ static void check_multiple_commits(struct transaction_manager *tm)
 		if (!btree_insert(tm, root, nl->key, nl->value, &root))
 			barf("insert");
 		if (i++ % 100 == 0) {
+			bm_io_mark(bm, "commit");
 			tm_commit(tm, root);
 			tm_begin(tm);
 		}
 	}
 
+	bm_io_mark(bm, "commit");
 	tm_commit(tm, root);
 	check_locks(tm);
 
