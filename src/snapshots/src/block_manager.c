@@ -111,6 +111,23 @@ static void free_block(struct block_manager *bm, struct block *b)
 	bm->blocks_allocated--;  /* FIXME: unprotected */
 }
 
+static void reap_lru(struct block_manager *bm)
+{
+	struct list *l, *tmp;
+	list_iterate_safe (l, tmp, &bm->lru_list) {
+		struct block *b;
+
+		if (bm->blocks_allocated <= bm->cache_size)
+			break;
+
+		b = list_struct_base(l, struct block, lru);
+		if (b->dirty)
+			write_block(bm, b);
+
+		free_block(bm, b);
+	}
+}
+
 static void add_to_lru(struct block_manager *bm, struct block *b)
 {
 	assert(b->read_count == 0);
@@ -161,6 +178,8 @@ static void unlock_block(struct block_manager *bm, struct block *b)
 		assert(b->write_count == 0);
 		add_to_lru(bm, b);
 	}
+
+	reap_lru(bm);
 }
 
 static unsigned hash_block(struct block_manager *bm, block_t b)
