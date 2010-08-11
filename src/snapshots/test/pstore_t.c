@@ -286,7 +286,7 @@ static void scenario5(struct exception_store *es)
  * 6 - read snap1 => IO_MAPPED (5)
  * 7 - read snap2 => IO_MAPPED (2)
  */
-void scenario6(struct exception_store *es)
+static void scenario6(struct exception_store *es)
 {
 	enum io_result r;
 	struct location from, to, result_2, result_5;
@@ -318,7 +318,82 @@ void scenario6(struct exception_store *es)
 	assert_mapped(r, &to, &result_2);
 }
 
-/* FIXME: scenario6, but with 3 layers of snaps */
+/* Scenario 7
+ * 1 - origin1 <- snap1
+ * 2 - write snap1 => IO_MAPPED
+ * 3 - snap1 <- snap2
+ * 4 - snap2 <- snap3
+ * 5 - write snap2 => IO_MAPPED (!2)
+ * 6 - read snap1 => IO_MAPPED (2)
+ * 7 - read snap3 => IO_MAPPED (2)
+ */
+static void scenario7(struct exception_store *es)
+{
+	enum io_result r;
+	struct location from, to, result_2;
+
+	_estore_new_snapshot(es, ORIGIN1, SNAP1);
+
+	from.dev = SNAP1;
+	from.block = 13;
+	r = estore_snapshot_map(es, &from, WRITE, &result_2);
+	assert(r == IO_MAPPED);
+
+	_estore_new_snapshot(es, SNAP1, SNAP2);
+	_estore_new_snapshot(es, SNAP2, SNAP3);
+
+	from.dev = SNAP2;
+	r = estore_snapshot_map(es, &from, WRITE, &to);
+	assert(r == IO_MAPPED);
+	assert(!loc_eq(&to, &result_2));
+
+	from.dev = SNAP1;
+	r = estore_snapshot_map(es, &from, READ, &to);
+	assert_mapped(r, &to, &result_2);
+
+	from.dev = SNAP3;
+	r = estore_snapshot_map(es, &from, READ, &to);
+	assert_mapped(r, &to, &result_2);
+}
+
+/* Scenario 8
+ * 1 - origin1 <- snap1
+ * 2 - write snap1 => IO_MAPPED
+ * 3 - snap1 <- snap2
+ * 4 - snap2 <- snap3
+ * 5 - write snap1 => IO_MAPPED (!2)
+ * 6 - read snap2 => IO_MAPPED (2)
+ * 7 - read snap3 => IO_MAPPED (2)
+ */
+static void scenario8(struct exception_store *es)
+{
+	enum io_result r;
+	struct location from, to, result_2;
+
+	_estore_new_snapshot(es, ORIGIN1, SNAP1);
+
+	from.dev = SNAP1;
+	from.block = 13;
+	r = estore_snapshot_map(es, &from, WRITE, &result_2);
+	assert(r == IO_MAPPED);
+
+	_estore_new_snapshot(es, SNAP1, SNAP2);
+	_estore_new_snapshot(es, SNAP2, SNAP3);
+
+	from.dev = SNAP1;
+	r = estore_snapshot_map(es, &from, WRITE, &to);
+	assert(r == IO_MAPPED);
+	assert(!loc_eq(&to, &result_2));
+
+	from.dev = SNAP2;
+	r = estore_snapshot_map(es, &from, READ, &to);
+	assert_mapped(r, &to, &result_2);
+
+	from.dev = SNAP3;
+	r = estore_snapshot_map(es, &from, READ, &to);
+	assert_mapped(r, &to, &result_2);
+}
+
 /* FIXME: add a scenario that sprinkles a few commits in. */
 /* FIXME: origin write to an origin that isn't snapshotted in a store should result in an error */
 /* FIXME: error if you try and create the same snapshot twice */
@@ -335,7 +410,9 @@ int main(int argc, char **argv)
 		{ "scenario 3", scenario3 },
 		{ "scenario 4", scenario4 },
 		{ "scenario 5", scenario5 },
-		{ "scenario 6", scenario6 }
+		{ "scenario 6", scenario6 },
+		{ "scenario 7", scenario7 },
+		{ "scenario 8", scenario8 }
 	};
 
 	unsigned i;
