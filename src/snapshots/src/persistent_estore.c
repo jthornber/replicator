@@ -1,9 +1,11 @@
 #include "persistent_estore.h"
 #include "transaction_manager.h"
 #include "btree.h"
+#include "space_map.h"
 
 #include "datastruct/list.h"
 
+#include <stdio.h>
 #include <string.h>
 
 /*----------------------------------------------------------------*/
@@ -280,8 +282,8 @@ enum io_result origin_write(void *context,
 		return origin_exception(ps, keys, to);
 
 	case LOOKUP_FOUND:
-		to->dev = ps->dev;
-		to->block = result_value;
+		to->dev = from->dev;
+		to->block = from->block;
 		return IO_MAPPED;
 	}
 
@@ -401,6 +403,27 @@ struct exception_store *persistent_store_create(struct block_manager *bm, dev_t 
 	}
 
 	return es;
+}
+
+int ps_dump_space_map(const char *file, struct exception_store *ps_)
+{
+	struct pstore *ps = (struct pstore *) ps_->context;
+
+	FILE *fp = fopen(file, "w");
+	if (!fp)
+		return 0;
+
+	{
+		block_t nr_blocks = bm_nr_blocks(ps->bm);
+		block_t i;
+		struct space_map *sm = tm_get_sm(ps->tm);
+
+		for (i = 0; i < nr_blocks; i++)
+			fprintf(fp, "%u\n", sm_get_count(sm, i));
+	}
+
+	fclose(fp);
+	return 1;
 }
 
 /*----------------------------------------------------------------*/
