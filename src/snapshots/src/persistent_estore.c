@@ -20,8 +20,10 @@ struct top_level {
 struct snapshot_list {
 	struct list list;
 	dev_t snap;
-	dev_t origin;
+	dev_t requested_origin;	/* eg, this may be another snapshot */
+	dev_t actual_origin;	/* but all snapshots eventually map onto an origin device (FIXME: thin provisioning) */
 	uint64_t creation_time; /* logical */
+	uint64_t last_snap_time; /* when someone last took a snapshot of this snapshot */
 };
 
 struct pstore {
@@ -44,9 +46,15 @@ struct pstore {
  * The origin maps use keys that combine both the block and the logical
  * time step.
  */
-static uint64_t pack_block_time(block_t b, unsigned t)
+static uint64_t pack_block_time(block_t b, uint64_t t)
 {
 	return ((b << 24) | t);
+}
+
+static void unpack_block_time(uint64_t v, block_t *b, uint64_t *t)
+{
+	*b = v >> 24;
+	*t = v & ((1 << 24) - 1);
 }
 
 static int find_snapshot(struct pstore *ps, dev_t snap, struct snapshot_list **result)
@@ -80,7 +88,7 @@ static int snap_origin(struct pstore *ps, dev_t snap, dev_t *origin)
 	if (!find_snapshot(ps, snap, &sl))
 		return 0;
 
-	*origin = sl->origin;
+	*origin = sl->actual_origin;
 	return 1;
 }
 
@@ -126,7 +134,7 @@ get_snapshot_detail(void *context, unsigned index, struct snapshot_detail *resul
 
 	sl = list_item(tmp, struct snapshot_list);
 	result->snap = sl->snap;
-	result->origin = sl->origin;
+	result->origin = sl->requested_origin;
 	return 1;
 }
 
@@ -192,11 +200,13 @@ static enum io_result snapshot_exception(struct pstore *ps,
 					 struct location *to)
 {
 	block_t cow_dest;
+	uint64_t value;
 
 	if (!tm_alloc_block(ps->tm, &cow_dest))
 		abort();
 
-	if (!btree_insert_h(ps->tm, ps->tl->snapshot_maps, keys, 2, cow_dest, &ps->tl->snapshot_maps))
+	value = pack_block_time(cow_dest, ps->time);
+	if (!btree_insert_h(ps->tm, ps->tl->snapshot_maps, keys, 2, value, &ps->tl->snapshot_maps))
 		abort();
 
 	to->dev = ps->dev;
@@ -210,7 +220,9 @@ enum io_result snapshot_map(void *context,
 			    struct location *to)
 {
 	struct pstore *ps = (struct pstore *) context;
-	uint64_t keys[2], result_value;
+	struct snapshot_list *sl;
+	enum io_result r;
+	uint64_t keys[2], result_value, exception_block, exception_time;
 
 	keys[0] = from->dev;
 	keys[1] = from->block;
@@ -230,6 +242,7 @@ enum io_result snapshot_map(void *context,
 			if (!snap_time(ps, from->dev, &t))
 				abort();
 
+			/* FIXME: this messes up |from| */
 			if (!snap_origin(ps, from->dev, &from->dev))
 				abort();
 
@@ -238,9 +251,34 @@ enum io_result snapshot_map(void *context,
 		break;
 
 	case LOOKUP_FOUND:
-		to->dev = ps->dev;
-		to->block = result_value;
-		return IO_MAPPED;
+		unpack_block_time(result_value, &exception_block, &exception_time);
+		if (io_type == READ) {
+			to->dev = ps->dev;
+			to->block = exception_block;
+			return IO_MAPPED;
+		}
+
+		if (!find_snapshot(ps, from->dev, &sl))
+			abort();
+
+		if (exception_time >= sl->last_snap_time) {
+			to->dev = ps->dev;
+			to->block = exception_block;
+			return IO_MAPPED;
+		}
+
+		/*
+		 * someone has taken a snapshot of _this_ snapshot since
+		 * this exception was made, we therefore need to make a new
+		 * exception.
+		 */
+		r = snapshot_exception(ps, keys, to);
+#if 0
+		if (r == IO_MAPPED)
+			/* FIXME: think of a way to test this */
+			tm_dec(ps->tm, exception_block);
+#endif
+		return r;
 	}
 
 	return IO_ERROR;
@@ -301,14 +339,16 @@ int new_snapshot(void *context, dev_t origin, dev_t snap)
 		return 0;
 
 	sd->snap = snap;
-	sd->origin = origin;
+	sd->requested_origin = origin;
+	sd->creation_time = ++ps->time;
+	sd->last_snap_time = sd->creation_time;
 
 	if (find_snapshot(ps, origin, &sd2)) {
 		uint64_t orig_root;
 
 		/* snapshot of a snapshot */
-		sd->origin = sd2->origin;
 		sd->creation_time = sd2->creation_time;
+		sd->actual_origin = sd2->actual_origin;
 
 		switch (btree_lookup_equal(ps->tm, ps->tl->snapshot_maps, origin, &orig_root)) {
 		case LOOKUP_ERROR:
@@ -323,8 +363,12 @@ int new_snapshot(void *context, dev_t origin, dev_t snap)
 
 		if (!btree_clone(ps->tm, orig_root, &new_tree))
 			abort();
+
+		sd2->last_snap_time = ps->time;
+
+		/* FIXME: we need to run down the whole chain of snapshots */
 	} else {
-		sd->creation_time = ++ps->time;
+		sd->actual_origin = origin;
 		if (!btree_empty(ps->tm, &new_tree))
 			abort();
 	}
