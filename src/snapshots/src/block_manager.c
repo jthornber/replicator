@@ -48,7 +48,7 @@ struct block_manager {
 	FILE *trace;
 };
 
-static struct block *alloc_block(struct block_manager *bm, size_t block_size)
+static struct block *alloc_block_(struct block_manager *bm)
 {
 	struct block *b = malloc(sizeof(*b));
 	if (!b)
@@ -56,7 +56,7 @@ static struct block *alloc_block(struct block_manager *bm, size_t block_size)
 
 	list_init(&b->lru);
 	list_init(&b->hash);
-	b->data = malloc(block_size);
+	b->data = malloc(bm->block_size);
 	if (!b->data) {
 		free(b);
 		return NULL;
@@ -67,6 +67,33 @@ static struct block *alloc_block(struct block_manager *bm, size_t block_size)
 
 	bm->blocks_allocated++;  /* FIXME: unprotected */
 	return b;
+}
+
+static int write_block(struct block_manager *bm, struct block *b);
+static struct block *alloc_block(struct block_manager *bm)
+{
+	if (bm->blocks_allocated > bm->cache_size && !list_empty(&bm->lru_list)) {
+		struct list *l;
+
+		/* reuse the head of the lru list */
+		list_iterate (l, &bm->lru_list) {
+			struct block *b = list_struct_base(l, struct block, lru);
+
+			if (b->dirty)
+				write_block(bm, b);
+
+			list_del(&b->lru);
+			list_del(&b->hash);
+			list_init(&b->lru);
+			list_init(&b->hash);
+			b->dirty = 0;
+			b->read_count = 0;
+			b->write_count = 0;
+			return b;
+		}
+	}
+
+	return alloc_block_(bm);
 }
 
 static void free_block(struct block_manager *bm, struct block *b)
@@ -283,7 +310,7 @@ static int bm_lock_(struct block_manager *bm, block_t block, enum block_lock how
 		*data = b->data;
 		lock_block(bm, b, how);
 	} else {
-		b = alloc_block(bm, bm->block_size);
+		b = alloc_block(bm);
 		if (!b)
 			return 0;
 
