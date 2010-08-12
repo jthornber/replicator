@@ -368,7 +368,14 @@ int new_snapshot(void *context, dev_t origin, dev_t snap)
 
 		/* FIXME: I expected to need to run down the whole chain of
 		 * snapshots adjusting the last_snap_time.  But the tests
-		 * pass as it is.  Revisit. */
+		 * pass as it is.  Revisit.
+		 *
+		 * A bit more thinking and I'm half convinced the current
+		 * code is correct.  This does highlight the need for a
+		 * more rigorous way of generating test scenarios.  We need
+		 * to _prove_ this is correct before we ask people to trust
+		 * their data to it.
+		 */
 	} else {
 		sd->actual_origin = origin;
 		if (!btree_empty(ps->tm, &new_tree))
