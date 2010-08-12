@@ -435,6 +435,13 @@ int main(int argc, char **argv)
 		table_[i].fn(ps);
 		_estore_commit(ps);
 
+		{
+			uint32_t *ref_counts = malloc(sizeof(*ref_counts) * NR_BLOCKS);
+			ps_walk(ps, ref_counts);
+
+			/* FIXME: compare with the space map */
+		}
+
 		estore_destroy(ps);
 		block_manager_destroy(bm);
 		close(fd);

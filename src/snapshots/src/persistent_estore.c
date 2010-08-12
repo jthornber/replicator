@@ -472,5 +472,34 @@ int ps_dump_space_map(const char *file, struct exception_store *ps_)
 	return 1;
 }
 
+void ignore_values(uint64_t leaf_value, uint32_t *ref_counts)
+{
+}
+
+void block_values(uint64_t leaf_value, uint32_t *ref_counts)
+{
+	ref_counts[leaf_value]++;
+}
+
+void block_time_values(uint64_t leaf_value, uint32_t *ref_counts)
+{
+	ref_counts[leaf_value >> 24]++;
+}
+
+void ps_walk(struct exception_store *es, uint32_t *ref_counts)
+{
+	struct top_level *tl;
+	struct pstore *ps = (struct pstore *) es->context;
+
+	if (!tm_read_lock(ps->tm, ps->superblock, (void **) &tl))
+		abort();
+
+	btree_walk(ps->tm, ignore_values, tl->space_map, ref_counts);
+	btree_walk_h(ps->tm, block_values, 2, tl->origin_maps, ref_counts);
+	btree_walk_h(ps->tm, block_time_values, 2, tl->snapshot_maps, ref_counts);
+
+	tm_read_unlock(ps->tm, ps->superblock);
+}
+
 /*----------------------------------------------------------------*/
 
