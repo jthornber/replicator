@@ -485,4 +485,31 @@ int btree_walk(struct transaction_manager *tm, leaf_fn lf,
 	return 1;
 }
 
+int btree_walk_h(struct transaction_manager *tm, leaf_fn lf,
+		 block_t root, unsigned levels, uint32_t *ref_counts)
+{
+	unsigned i;
+	struct node *n;
+
+	if (levels == 1)
+		return btree_walk(tm, lf, root, ref_counts);
+	else {
+		ref_counts[root]++;
+		if (!tm_read_lock(tm, root, (void **) &n)) {
+			abort();
+		}
+
+		if (n->header.flags & INTERNAL_NODE)
+			for (i = 0; i < n->header.nr_entries; i++)
+				btree_walk_h(tm, lf, n->values[i], levels, ref_counts);
+		else
+			for (i = 0; i < n->header.nr_entries; i++)
+				btree_walk_h(tm, lf, n->values[i], levels - 1, ref_counts);
+	}
+
+	tm_read_unlock(tm, root);
+
+	return 1;
+}
+
 /*----------------------------------------------------------------*/

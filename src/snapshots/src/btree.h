@@ -100,10 +100,8 @@ typedef void (*leaf_fn)(uint64_t leaf_value, uint32_t *ref_counts);
 int btree_walk(struct transaction_manager *tm, leaf_fn lf,
 	       block_t root, uint32_t *ref_counts);
 
-#if 0
 int btree_walk_h(struct transaction_manager *tm, leaf_fn lf,
-		 block_t root, unsigned count, struct space_map *sm);
-#endif
+		 block_t root, unsigned levels, uint32_t *ref_counts);
 
 /*----------------------------------------------------------------*/
 
