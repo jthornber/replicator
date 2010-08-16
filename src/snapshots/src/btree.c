@@ -462,11 +462,34 @@ int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone)
 	return 1;
 }
 
-int btree_walk(struct transaction_manager *tm, leaf_fn lf,
-	       block_t root, uint32_t *ref_counts)
+/*----------------------------------------------------------------*/
+
+struct block_list {
+	struct list list;
+	block_t b;
+};
+
+static int btree_walk_(struct transaction_manager *tm, leaf_fn lf,
+		       block_t root, unsigned levels, uint32_t *ref_counts, struct list *seen,
+		       struct pool *mem)
 {
 	unsigned i;
 	struct node *n;
+	struct list *l;
+
+	list_iterate (l, seen) {
+		struct block_list *bl = list_struct_base(l, struct block_list, list);
+		if (bl->b == root)
+			return 1;
+	}
+
+	{
+		struct block_list *bl = pool_alloc(mem, sizeof(*bl));
+		if (!bl)
+			return 0;
+
+		list_add(seen, &bl->list);
+	}
 
 	ref_counts[root]++;
 	if (!tm_read_lock(tm, root, (void **) &n)) {
@@ -475,41 +498,53 @@ int btree_walk(struct transaction_manager *tm, leaf_fn lf,
 
 	if (n->header.flags & INTERNAL_NODE)
 		for (i = 0; i < n->header.nr_entries; i++)
-			btree_walk(tm, lf, n->values[i], ref_counts);
-	else
-		for (i = 0; i < n->header.nr_entries; i++)
-			lf(n->values[i], ref_counts);
+			btree_walk_(tm, lf, n->values[i], levels, ref_counts, seen, mem);
+	else {
+		if (levels == 1)
+			for (i = 0; i < n->header.nr_entries; i++)
+				lf(n->values[i], ref_counts);
+		else
+			for (i = 0; i < n->header.nr_entries; i++)
+				btree_walk_(tm, lf, n->values[i], levels - 1, ref_counts,
+					    seen, mem);
+	}
 
 	tm_read_unlock(tm, root);
 
 	return 1;
 }
 
+int btree_walk(struct transaction_manager *tm, leaf_fn lf,
+	       block_t root, uint32_t *ref_counts)
+{
+	int r;
+	struct list seen;
+	struct pool *mem = pool_create("", 1024);
+
+	if (!mem)
+		return 0;
+
+	list_init(&seen);
+	r = btree_walk_(tm, lf, root, 1, ref_counts, &seen, mem);
+	pool_destroy(mem);
+	return r;
+}
+
+
 int btree_walk_h(struct transaction_manager *tm, leaf_fn lf,
 		 block_t root, unsigned levels, uint32_t *ref_counts)
 {
-	unsigned i;
-	struct node *n;
+	int r;
+	struct list seen;
+	struct pool *mem = pool_create("", 1024);
 
-	if (levels == 1)
-		return btree_walk(tm, lf, root, ref_counts);
-	else {
-		ref_counts[root]++;
-		if (!tm_read_lock(tm, root, (void **) &n)) {
-			abort();
-		}
+	if (!mem)
+		return 0;
 
-		if (n->header.flags & INTERNAL_NODE)
-			for (i = 0; i < n->header.nr_entries; i++)
-				btree_walk_h(tm, lf, n->values[i], levels, ref_counts);
-		else
-			for (i = 0; i < n->header.nr_entries; i++)
-				btree_walk_h(tm, lf, n->values[i], levels - 1, ref_counts);
-	}
-
-	tm_read_unlock(tm, root);
-
-	return 1;
+	list_init(&seen);
+	r = btree_walk_(tm, lf, root, levels, ref_counts, &seen, mem);
+	pool_destroy(mem);
+	return r;
 }
 
 /*----------------------------------------------------------------*/

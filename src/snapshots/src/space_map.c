@@ -85,7 +85,7 @@ static int add_delta(struct space_map *sm, block_t b, int32_t delta)
 	struct cache_entry *ce = find_entry(sm, b);
 
 	if (!ce) {
-		uint64_t ref_count;
+		uint64_t ref_count = 0;
 		if (sm->initialised) {
 			switch (btree_lookup_equal(sm->tm, sm->root, b, &ref_count)) {
 			case LOOKUP_ERROR:
@@ -110,6 +110,9 @@ static int add_delta(struct space_map *sm, block_t b, int32_t delta)
 
 	if (ce->unwritten)
 		list_move(&sm->deltas, &ce->lru);
+
+	if (ce->delta < 0)
+		assert(ce->ref_count >= -ce->delta);
 
 	return 1;
 }

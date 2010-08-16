@@ -2,6 +2,8 @@
 
 #include "datastruct/list.h"
 
+#include <stdlib.h>
+
 /*----------------------------------------------------------------*/
 
 struct dlist {

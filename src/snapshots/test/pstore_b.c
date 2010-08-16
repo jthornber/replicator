@@ -397,10 +397,12 @@ int main(int argc, char **argv)
 			abort();
 
 		fprintf(stderr, "%s\n", table_[i].name);
-		snprintf(buffer, sizeof(buffer), "%s.trace", table_[i].name);
+		snprintf(buffer, sizeof(buffer), "%s.io_trace", table_[i].name);
 		bm_start_io_trace(bm, buffer);
 		table_[i].fn(bm, ps);
 
+		snprintf(buffer, sizeof(buffer), "%s.space_map", table_[i].name);
+		ps_dump_space_map(buffer, ps);
 		estore_destroy(ps);
 		block_manager_destroy(bm);
 		close(fd);

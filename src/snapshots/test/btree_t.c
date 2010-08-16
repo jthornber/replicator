@@ -345,7 +345,7 @@ int main(int argc, char **argv)
 	struct block_manager *bm;
 	struct transaction_manager *tm;
 
-	populate_randoms(10000);
+	populate_randoms(10);
 	for (i = 0; i < sizeof(table_) / sizeof(*table_); i++) {
 		printf("running %s()\n", table_[i].name);
 

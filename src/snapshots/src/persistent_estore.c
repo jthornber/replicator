@@ -458,27 +458,6 @@ struct exception_store *persistent_store_create(struct block_manager *bm, dev_t 
 	return es;
 }
 
-int ps_dump_space_map(const char *file, struct exception_store *ps_)
-{
-	struct pstore *ps = (struct pstore *) ps_->context;
-
-	FILE *fp = fopen(file, "w");
-	if (!fp)
-		return 0;
-
-	{
-		block_t nr_blocks = bm_nr_blocks(ps->bm);
-		block_t i;
-		struct space_map *sm = tm_get_sm(ps->tm);
-
-		for (i = 0; i < nr_blocks; i++)
-			fprintf(fp, "%u\n", sm_get_count(sm, i));
-	}
-
-	fclose(fp);
-	return 1;
-}
-
 void ignore_values(uint64_t leaf_value, uint32_t *ref_counts)
 {
 }
@@ -501,11 +480,61 @@ void ps_walk(struct exception_store *es, uint32_t *ref_counts)
 	if (!tm_read_lock(ps->tm, ps->superblock, (void **) &tl))
 		abort();
 
-	btree_walk(ps->tm, ignore_values, tl->space_map, ref_counts);
+	sm_walk(tm_get_sm(ps->tm), ref_counts);
 	btree_walk_h(ps->tm, block_values, 2, tl->origin_maps, ref_counts);
 	btree_walk_h(ps->tm, block_time_values, 2, tl->snapshot_maps, ref_counts);
 
 	tm_read_unlock(ps->tm, ps->superblock);
+}
+
+int ps_dump_space_map(const char *file, struct exception_store *ps_)
+{
+	struct pstore *ps = (struct pstore *) ps_->context;
+
+	FILE *fp = fopen(file, "w");
+	if (!fp)
+		return 0;
+
+	{
+		block_t nr_blocks = bm_nr_blocks(ps->bm);
+		block_t i;
+		struct space_map *sm = tm_get_sm(ps->tm);
+
+		for (i = 0; i < nr_blocks; i++)
+			fprintf(fp, "%u\n", sm_get_count(sm, i));
+	}
+
+	fclose(fp);
+	return 1;
+}
+
+int ps_diff_space_map(const char *file, struct exception_store *ps_,
+		      uint32_t *expected_counts)
+{
+	int r = 1;
+	struct pstore *ps = (struct pstore *) ps_->context;
+
+	FILE *fp = fopen(file, "w");
+	if (!fp)
+		return 0;
+
+	{
+		block_t nr_blocks = bm_nr_blocks(ps->bm);
+		block_t i;
+		struct space_map *sm = tm_get_sm(ps->tm);
+
+		for (i = 0; i < nr_blocks; i++) {
+			uint32_t actual_count = sm_get_count(sm, i);
+			if (actual_count != expected_counts[i]) {
+				fprintf(fp, "%u %d\n", (unsigned) i,
+					(int32_t) actual_count - (int32_t) expected_counts[i]);
+				r = 0;
+			}
+		}
+	}
+
+	fclose(fp);
+	return r;
 }
 
 /*----------------------------------------------------------------*/

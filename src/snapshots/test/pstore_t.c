@@ -13,6 +13,16 @@
 
 /*----------------------------------------------------------------*/
 
+static void *zalloc(size_t len)
+{
+	void *r = malloc(len);
+	if (r)
+		memset(r, 0, len);
+	return r;
+}
+
+/*----------------------------------------------------------------*/
+
 static int open_file()
 {
 	int i;
@@ -486,10 +496,12 @@ int main(int argc, char **argv)
 		_estore_commit(ps);
 
 		{
-			uint32_t *ref_counts = malloc(sizeof(*ref_counts) * NR_BLOCKS);
+			char buffer[1024];
+			uint32_t *ref_counts = zalloc(sizeof(*ref_counts) * NR_BLOCKS);
 			ps_walk(ps, ref_counts);
 
-			/* FIXME: compare with the space map */
+			snprintf(buffer, sizeof(buffer), "%s.space_diff", table_[i].name);
+			assert(ps_diff_space_map(buffer, ps, ref_counts));
 		}
 
 		estore_destroy(ps);
