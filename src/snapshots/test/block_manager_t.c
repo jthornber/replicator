@@ -9,29 +9,41 @@
 #include <unistd.h>
 
 #undef BLOCK_SIZE
-#define BLOCK_SIZE 1024
+#define BLOCK_SIZE 4096
 #define NR_BLOCKS 10240
 
 void barf(const char *msg)
 {
 	fprintf(stderr, "%s", msg);
-	exit(1);
+	abort();
 }
 
 int create_file()
 {
+	ssize_t r;
 	unsigned char data[BLOCK_SIZE];
 	int i;
-	int fd = open("./block_file", O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+	int fd = open("./block_file", O_CREAT | O_TRUNC | O_RDWR,
+		      S_IRUSR | S_IWUSR);
 	if (fd < 0)
 		barf("couldn't open block file");
 
 	for (i = 0; i < NR_BLOCKS; i++) {
 		memset(data, i, sizeof(data));
-		write(fd, data, sizeof(data));
+		r = write(fd, data, sizeof(data));
+		if (r < 0)
+			barf("write failed");
 	}
 
-	lseek(fd, 0, SEEK_SET);
+#if 0
+	close(fd);
+
+	fd = open("./block_file", O_CREAT | O_TRUNC | O_RDWR | O_DIRECT | O_SYNC,
+		  S_IRUSR | S_IWUSR);
+	if (fd < 0)
+		barf("couldn't reopen block file");
+#endif
+
 	return fd;
 }
 
@@ -42,36 +54,74 @@ void check_read(struct block_manager *bm)
 	void *block = NULL;
 
 	for (i = 0; i < NR_BLOCKS; i++) {
-		bm_lock(bm, i, LOCK_READ, &block);
+		if (!bm_lock(bm, i, BM_LOCK_READ, &block))
+			barf("bm_lock failed");
 		memset(data, i, sizeof(data));
 		assert(!memcmp(data, block, sizeof(data)));
-		bm_unlock(bm, i, 0);
+		if (!bm_unlock(bm, i, 0))
+			barf("bm_unlock failed");
 	}
 
 	assert(bm_read_locks_held(bm) == 0);
 }
 
+/*
+ * scrolls a window of write locks across the device.
+ */
+#define WINDOW_SIZE 64
 void check_write(struct block_manager *bm)
 {
-	unsigned char *data;
+	block_t b;
+	unsigned char *data[WINDOW_SIZE];
+	unsigned char expected[BLOCK_SIZE];
 
-	if (!bm_lock(bm, 123, LOCK_WRITE, (void **) &data))
-		barf("coudln't lock block");
+	for (b = 0; b < WINDOW_SIZE; b++) {
+		if (!bm_lock(bm, b, BM_LOCK_WRITE, (void **) &data[b]))
+			barf("couldn't lock block");
 
-	data[0] = 'e';
-	data[457] = 'j';
-	data[1023] = 't';
+		memset(data[b], 1, BLOCK_SIZE);
+	}
 
-	bm_unlock(bm, 123, 1);
+	for (b = WINDOW_SIZE; b < NR_BLOCKS; b++) {
+		if (!bm_lock(bm, b, BM_LOCK_WRITE, (void **) &data[b % WINDOW_SIZE]))
+			barf("couldn't lock block");
 
-	if (!bm_lock(bm, 123, LOCK_READ, (void **) &data))
-		barf("couldn't lock block");
+		memset(data[b % WINDOW_SIZE], 1, BLOCK_SIZE);
 
-	assert(data[0] == 'e');
-	assert(data[457] == 'j');
-	assert(data[1023] = 't');
+		if (!bm_unlock(bm, b - WINDOW_SIZE, 1))
+			barf("bm_unlock");
+	}
 
-	bm_unlock(bm, 123, 0);
+	for (b = NR_BLOCKS - WINDOW_SIZE; b < NR_BLOCKS; b++)
+		if (!bm_unlock(bm, b, 1))
+			barf("bm_unlock");
+
+	/* data[0] = 'e'; */
+	/* data[457] = 'j'; */
+	/* data[1023] = 't'; */
+
+	memset(expected, 1, BLOCK_SIZE);
+	for (b = 0; b < NR_BLOCKS; b++) {
+		if (!bm_lock(bm, b, BM_LOCK_READ, (void **) &data[0]))
+			barf("bm_lock");
+
+		assert(memcmp(data[0], expected, BLOCK_SIZE) == 0);
+
+		if (!bm_unlock(bm, b, 0))
+			barf("bm_unlock");
+	}
+
+	bm_flush(bm, 1);
+
+	for (b = 0; b < NR_BLOCKS; b++) {
+		if (!bm_lock(bm, b, BM_LOCK_READ, (void **) &data[0]))
+			barf("bm_lock");
+
+		assert(memcmp(data[0], expected, BLOCK_SIZE) == 0);
+
+		if (!bm_unlock(bm, b, 0))
+			barf("bm_unlock");
+	}
 
 	assert(bm_read_locks_held(bm) == 0);
 	assert(bm_write_locks_held(bm) == 0);
@@ -86,7 +136,7 @@ void check_bad_unlock(struct block_manager *bm)
 	assert(bm_read_locks_held(bm) == 0);
 	assert(bm_write_locks_held(bm) == 0);
 
-	assert(bm_lock(bm, 124, LOCK_READ, &data));
+	assert(bm_lock(bm, 124, BM_LOCK_READ, &data));
 	assert(!bm_unlock(bm, 124, 1));
 	assert(bm_unlock(bm, 124, 0));
 	assert(bm_read_locks_held(bm) == 0);

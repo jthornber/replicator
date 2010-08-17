@@ -2,28 +2,46 @@
 
 #include "datastruct/list.h"
 
+#include <aio.h>
 #include <assert.h>
-#include <pthread.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+/*
+ * The block manager implementation is split into three parts:
+ * 1) a low level block manager that handles allocation and locking of blocks
+ * 2) an async io library
+ * 3) the top level code to tie these parts together
+ */
+
 /*----------------------------------------------------------------*/
 
+/*
+ * Low level block management.
+ */
 struct block {
-	struct list lru;
+	struct list list;	/* lru, locked */
 	struct list hash;
 
 	block_t where;
 	enum block_lock type;
-	void *data;
-	int dirty;
 
-	/* debug fields */
+	/* aio buffers must be page aligned */
+	/* FIXME: don't be so wasteful with memory */
+	void *alloc;
+	void *data;
+
+	int dirty;
 	unsigned read_count;
 	unsigned write_count;
+
+	struct aiocb aiocb;
 };
+
+/*----------------------------------------------------------------*/
 
 /* FIXME: locking is ignored for now */
 struct block_manager {
@@ -34,10 +52,13 @@ struct block_manager {
 	unsigned read_count;
 	unsigned write_count;
 
-	pthread_mutex_t lock;	/* protects both lru and hash */
 	unsigned blocks_allocated;
+
+	/* FIXME: draw a state diagram showing how the blocks move between
+	 * these three lists and the hash. */
 	struct list lru_list;
 	struct list locked_list;
+	struct list io_list;
 
 	/* hash table of cached blocks */
 	unsigned cache_size;
@@ -48,15 +69,24 @@ struct block_manager {
 	FILE *trace;
 };
 
+static void *align(void *data, size_t a)
+{
+	/* FIXME: 64 bit issues */
+	size_t mask = a - 1;
+	size_t offset = ((size_t) data) & mask;
+	return offset ? data + (a - offset) : data;
+}
+
 static struct block *alloc_block_(struct block_manager *bm)
 {
 	struct block *b = malloc(sizeof(*b));
 	if (!b)
 		return NULL;
 
-	list_init(&b->lru);
+	list_init(&b->list);
 	list_init(&b->hash);
-	b->data = malloc(bm->block_size);
+	b->alloc = malloc(bm->block_size + getpagesize());
+	b->data = align(b->alloc, getpagesize());
 	if (!b->data) {
 		free(b);
 		return NULL;
@@ -69,28 +99,117 @@ static struct block *alloc_block_(struct block_manager *bm)
 	return b;
 }
 
-static int write_block(struct block_manager *bm, struct block *b);
+/* for now we just use aio on the write path */
+static int read_block(struct block_manager *bm, struct block *b)
+{
+	if (lseek(bm->fd, b->where * bm->block_size, SEEK_SET) < 0)
+		return 0;
+
+	if (read(bm->fd, b->data, bm->block_size) < 0)
+		return 0;
+
+	bm->read_count++; /* FIXME: unprotected */
+
+	if (bm->trace)
+		fprintf(bm->trace, "read %u\n", (unsigned) b->where);
+
+	return 1;
+}
+
+static int write_block(struct block_manager *bm, struct block *b)
+{
+	memset(&b->aiocb, 0, sizeof(b->aiocb));
+	b->aiocb.aio_fildes = bm->fd;
+	b->aiocb.aio_offset = b->where * bm->block_size;
+	b->aiocb.aio_buf = b->data;
+	b->aiocb.aio_nbytes = bm->block_size;
+	if (aio_write(&b->aiocb) < 0) {
+		abort();
+		return 0;
+	}
+
+	bm->write_count++;	/* FIXME: unprotected */
+
+	if (bm->trace)
+		fprintf(bm->trace, "write %u\n", (unsigned) b->where);
+
+	list_move(&bm->io_list, &b->list);
+
+	return 1;
+}
+
+static int check_io(struct block_manager *bm)
+{
+	struct block *b, *tmp;
+
+	list_iterate_items_safe (b, tmp, &bm->io_list) {
+		int r = aio_error(&b->aiocb);
+		if (r == EINPROGRESS)
+			continue;
+
+		if (r == 0) {
+			list_move(&bm->lru_list, &b->list);
+			b->dirty = 0;
+		} else
+			abort();
+	}
+
+	return 1;
+}
+
+/* FIXME: busy wait ! */
+static int wait_io(struct block_manager *bm, struct block *b)
+{
+	int r;
+
+	do {
+		r = aio_error(&b->aiocb);
+	} while (r == EINPROGRESS);
+
+	list_move(&bm->lru_list, &b->list);
+	return r == 0;
+}
+
+static int wait_all_io(struct block_manager *bm)
+{
+	struct block *b, *tmp;
+
+	list_iterate_items_safe (b, tmp, &bm->io_list) {
+		int r = wait_io(bm, b);
+		if (!r)
+			abort();
+	}
+
+	return 1;
+}
+
 static struct block *alloc_block(struct block_manager *bm)
 {
 	if (bm->blocks_allocated > bm->cache_size && !list_empty(&bm->lru_list)) {
-		struct list *l;
+		struct list *l, *tmp;
+
+		check_io(bm);
 
 		/* reuse the head of the lru list */
-		list_iterate (l, &bm->lru_list) {
-			struct block *b = list_struct_base(l, struct block, lru);
+		list_iterate_safe (l, tmp, &bm->lru_list) {
+			struct block *b = list_struct_base(l, struct block, list);
 
-			if (b->dirty)
+			if (b->dirty) {
 				write_block(bm, b);
+				continue;
+			}
 
-			list_del(&b->lru);
+			list_del(&b->list);
 			list_del(&b->hash);
-			list_init(&b->lru);
+			list_init(&b->list);
 			list_init(&b->hash);
 			b->dirty = 0;
 			b->read_count = 0;
 			b->write_count = 0;
 			return b;
 		}
+
+		/* FIXME: we should wait for io here */
 	}
 
 	return alloc_block_(bm);
@@ -104,9 +223,9 @@ static void free_block(struct block_manager *bm, struct block *b)
 	if (b->read_count || b->write_count)
 		abort();
 
-	list_del(&b->lru);
+	list_del(&b->list);
 	list_del(&b->hash);
-	free(b->data);
+	free(b->alloc);
 	free(b);
 	bm->blocks_allocated--;  /* FIXME: unprotected */
 }
@@ -120,9 +239,11 @@ static void reap_lru(struct block_manager *bm)
 		if (bm->blocks_allocated <= bm->cache_size)
 			break;
 
-		b = list_struct_base(l, struct block, lru);
-		if (b->dirty)
+		b = list_struct_base(l, struct block, list);
+		if (b->dirty) {
 			write_block(bm, b);
+			wait_io(bm, b);
+		}
 
 		free_block(bm, b);
 	}
@@ -133,29 +254,25 @@ static void add_to_lru(struct block_manager *bm, struct block *b)
 	assert(b->read_count == 0);
 	assert(b->write_count == 0);
 
-	pthread_mutex_lock(&bm->lock);
-	list_del(&b->lru);
-	list_add_h(&bm->lru_list, &b->lru);
-	pthread_mutex_unlock(&bm->lock);
+	list_del(&b->list);
+	list_add_h(&bm->lru_list, &b->list);
 }
 
 static void add_to_locked(struct block_manager *bm, struct block *b)
 {
-	pthread_mutex_lock(&bm->lock);
-	list_del(&b->lru);
-	list_add_h(&bm->locked_list, &b->lru);
-	pthread_mutex_unlock(&bm->lock);
+	list_del(&b->list);
+	list_add_h(&bm->locked_list, &b->list);
 }
 
 static void lock_block(struct block_manager *bm, struct block *b, enum block_lock how)
 {
 	switch (how) {
-	case LOCK_READ:
+	case BM_LOCK_READ:
 		assert(!b->write_count);
 		b->read_count++;
 		break;
 
-	case LOCK_WRITE:
+	case BM_LOCK_WRITE:
 		assert(!b->read_count);
 		assert(!b->write_count);
 		if (b->write_count)
@@ -204,19 +321,13 @@ static struct block *find_block_(struct block_manager *bm, block_t b)
 
 static struct block *find_block(struct block_manager *bm, block_t b)
 {
-	struct block *bl;
-	pthread_mutex_lock(&bm->lock);
-	bl = find_block_(bm, b);
-	pthread_mutex_unlock(&bm->lock);
-	return bl;
+	return find_block_(bm, b);
 }
 
 static void insert_block(struct block_manager *bm, struct block *b)
 {
 	unsigned bucket = hash_block(bm, b->where);
-	pthread_mutex_lock(&bm->lock);
 	list_add_h(bm->buckets + bucket, &b->hash);
-	pthread_mutex_unlock(&bm->lock);
 }
 
 static unsigned next_power_of_2(unsigned n)
@@ -229,34 +340,6 @@ static unsigned next_power_of_2(unsigned n)
 	return p;
 }
 
-static int read_block(struct block_manager *bm, struct block *b)
-{
-	if ((lseek(bm->fd, b->where * bm->block_size, SEEK_SET) < 0) ||
-	    (read(bm->fd, b->data, bm->block_size) < 0))
-		return 0;
-
-	bm->read_count++; /* FIXME: unprotected */
-
-	if (bm->trace)
-		fprintf(bm->trace, "read %u\n", (unsigned) b->where);
-
-	return 1;
-}
-
-static int write_block(struct block_manager *bm, struct block *b)
-{
-	if ((lseek(bm->fd, b->where * bm->block_size, SEEK_SET) < 0) ||
-	    (write(bm->fd, b->data, bm->block_size) < 0))
-		return 0;
-
-	bm->write_count++;	/* FIXME: unprotected */
-
-	if (bm->trace)
-		fprintf(bm->trace, "write %u\n", (unsigned) b->where);
-
-	return 1;
-}
-
 /*----------------------------------------------------------------*/
 
 struct block_manager *
@@ -267,15 +350,17 @@ block_manager_create(int fd, size_t block_size, block_t nr_blocks, unsigned cach
 	if (!bm)
 		return NULL;
 
+	assert((block_size & (getpagesize() - 1)) == 0);
+
 	bm->fd = fd;
 	bm->block_size = block_size;
 	bm->nr_blocks = nr_blocks;
 	bm->read_count = 0;
 	bm->write_count = 0;
-	pthread_mutex_init(&bm->lock, NULL);
 	bm->blocks_allocated = 0;
 	list_init(&bm->lru_list);
 	list_init(&bm->locked_list);
+	list_init(&bm->io_list);
 
 	bm->cache_size = cache_size;
 	bm->nr_buckets = next_power_of_2(cache_size);
@@ -299,10 +384,8 @@ void block_manager_destroy(struct block_manager *bm)
 	if (bm->trace)
 		fclose(bm->trace);
 
-	pthread_mutex_destroy(&bm->lock);
-
 	list_iterate_safe (l, tmp, &bm->lru_list) {
-		struct block *b = list_struct_base(l, struct block, lru);
+		struct block *b = list_struct_base(l, struct block, list);
 		free_block(bm, b);
 	}
 
@@ -359,7 +442,7 @@ int bm_lock(struct block_manager *bm, block_t block, enum block_lock how, void *
 
 int bm_lock_no_read(struct block_manager *bm, block_t b, enum block_lock how, void **data)
 {
-	if (how != LOCK_WRITE)
+	if (how != BM_LOCK_WRITE)
 		return 0;
 
 	return bm_lock_(bm, b, how, 0, data);
@@ -377,13 +460,14 @@ int bm_unlock(struct block_manager *bm, block_t block, int changed)
 		return 0;
 
 	switch (b->type) {
-	case LOCK_WRITE:
+	case BM_LOCK_WRITE:
 		if (changed)
 			b->dirty |= 1;
 		break;
 
-	case LOCK_READ:
-		assert(!changed);
+	case BM_LOCK_READ:
+		if (changed)
+			return 0;
 		break;
 	}
 	unlock_block(bm, b);
@@ -398,17 +482,16 @@ int bm_flush(struct block_manager *bm, int block)
 	 */
 	int r = 1;
 	struct list *l, *tmp;
-	pthread_mutex_lock(&bm->lock);
+
 	list_iterate_safe (l, tmp, &bm->lru_list) {
-		struct block *b = list_struct_base(l, struct block, lru);
+		struct block *b = list_struct_base(l, struct block, list);
 		if (b->dirty) {
-			if (write_block(bm, b))
-				b->dirty = 0;
-			else
+			if (!write_block(bm, b))
 				r = 0;
 		}
 	}
-	pthread_mutex_unlock(&bm->lock);
+
+	wait_all_io(bm);
 
 	return r;
 }
@@ -425,7 +508,7 @@ static unsigned count_locks(struct block_manager *bm, enum block_lock t)
 	unsigned n = 0;
 
 	list_iterate (l, &bm->locked_list) {
-		struct block *b = list_struct_base(l, struct block, lru);
+		struct block *b = list_struct_base(l, struct block, list);
 		if (b->type == t)
 			n++;
 	}
@@ -435,12 +518,12 @@ static unsigned count_locks(struct block_manager *bm, enum block_lock t)
 
 unsigned bm_read_locks_held(struct block_manager *bm)
 {
-	return count_locks(bm, LOCK_READ);
+	return count_locks(bm, BM_LOCK_READ);
 }
 
 unsigned bm_write_locks_held(struct block_manager *bm)
 {
-	return count_locks(bm, LOCK_WRITE);
+	return count_locks(bm, BM_LOCK_WRITE);
 }
 
 int bm_start_io_trace(struct block_manager *bm, const char *file)
