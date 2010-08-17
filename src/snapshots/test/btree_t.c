@@ -50,16 +50,24 @@ static void free_randoms()
 	pool_destroy(mem_);
 }
 
-#if 0
+/*
+ * For these tests we're not interested in the space map root, so we roll
+ * tm_pre_commit() and tm_commit() into one function.
+ */
+static void commit(struct transaction_manager *tm, block_t root)
+{
+	block_t sm_root;
+	tm_pre_commit(tm, &sm_root);
+	tm_commit(tm, root);
+}
+
 static void ignore_leaf(uint64_t leaf, uint32_t *ref_counts)
 {
 }
-#endif
+
 void check_reference_counts(struct transaction_manager *tm,
 			    block_t *roots, unsigned count)
 {
-#if 0
-	int i;
 	block_t b, nr_blocks = bm_nr_blocks(tm_get_bm(tm));
 	uint32_t *ref_counts = malloc(sizeof(*ref_counts) * nr_blocks);
         struct space_map *sm = tm_get_sm(tm);
@@ -67,14 +75,15 @@ void check_reference_counts(struct transaction_manager *tm,
 	assert(ref_counts);
 
 	memset(ref_counts, 0, sizeof(*ref_counts) * nr_blocks);
-	for (i = 0; i < count; i++)
-		btree_walk(tm, ignore_leaf, roots[i], ref_counts);
+	btree_walk(tm, ignore_leaf, roots, count, ref_counts);
 	sm_walk(sm, ref_counts);
 
 	for (b = 0; b < nr_blocks; b++)
-		if (ref_counts[b] != sm_get_count(sm, b))
+		if (ref_counts[b] != sm_get_count(sm, b)) {
+			fprintf(stderr, "ref count mismatch for block %u, space map (%u), expected (%u)\n",
+				(unsigned) b, sm_get_count(sm, b), ref_counts[b]);
 			abort();
-#endif
+		}
 }
 
 static void check_locks(struct transaction_manager *tm)
@@ -105,7 +114,7 @@ static void check_insert(struct transaction_manager *tm)
 	list_iterate_items (nl, &randoms_)
 		if (!btree_insert(tm, root, nl->key, nl->value, &root))
 			barf("insert");
-	tm_commit(tm, root);
+	commit(tm, root);
 	check_locks(tm);
 
 	list_iterate_items (nl, &randoms_) {
@@ -139,13 +148,13 @@ static void check_multiple_commits(struct transaction_manager *tm)
 			barf("insert");
 		if (i++ % 100 == 0) {
 			bm_io_mark(bm, "commit");
-			tm_commit(tm, root);
+			commit(tm, root);
 			tm_begin(tm);
 		}
 	}
 
 	bm_io_mark(bm, "commit");
-	tm_commit(tm, root);
+	commit(tm, root);
 	check_locks(tm);
 
 	list_iterate_items (nl, &randoms_) {
@@ -180,12 +189,12 @@ static void check_multiple_commits_contiguous(struct transaction_manager *tm)
 		if (!btree_insert(tm, root, key++, nl->value, &root))
 			barf("insert");
 		if (i++ % 100 == 0) {
-			tm_commit(tm, root);
+			commit(tm, root);
 			tm_begin(tm);
 		}
 	}
 
-	tm_commit(tm, root);
+	commit(tm, root);
 	check_locks(tm);
 
 	key = 0;
@@ -233,7 +242,7 @@ static void check_insert_h(struct transaction_manager *tm)
 		if (!btree_insert_h(tm, root, table[i], 4, table[i][4], &root))
 			barf("insert");
 	}
-	tm_commit(tm, root);
+	commit(tm, root);
 	check_locks(tm);
 
 	for (i = 0; i < sizeof(table) / sizeof(*table); i++) {
@@ -251,7 +260,7 @@ static void check_insert_h(struct transaction_manager *tm)
 		tm_begin(tm);
 		if (!btree_insert_h(tm, root, keys, 4, 2112, &root))
 			barf("insert");
-		tm_commit(tm, root);
+		commit(tm, root);
 		check_locks(tm);
 
 		if (!btree_lookup_equal_h(tm, root, keys, 4, &value))
@@ -266,7 +275,7 @@ static void check_insert_h(struct transaction_manager *tm)
 		if (!btree_insert_h(tm, root, overwrites[i], 4, overwrites[i][4], &root))
 			barf("insert");
 	}
-	tm_commit(tm, root);
+	commit(tm, root);
 	check_locks(tm);
 
 	for (i = 0; i < sizeof(overwrites) / sizeof(*overwrites); i++) {
@@ -296,7 +305,7 @@ static void check_clone(struct transaction_manager *tm)
 	btree_clone(tm, root, &clone);
 	assert(clone);
 
-	tm_commit(tm, clone);
+	commit(tm, clone);
 	check_locks(tm);
 
 	list_iterate_items (nl, &randoms_) {
@@ -331,7 +340,7 @@ static int open_file()
 	fsync(fd);
 	close(fd);
 
-	fd = open("./block_file", O_RDWR | O_DIRECT | O_SYNC);
+	fd = open("./block_file", O_RDWR | O_DIRECT);
 	if (fd < 0)
 		barf("couldn't reopen block file");
 

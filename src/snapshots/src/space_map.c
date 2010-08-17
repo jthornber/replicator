@@ -4,7 +4,6 @@
 #include "datastruct/list.h"
 
 #include <assert.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -68,6 +67,7 @@ static struct cache_entry *find_entry(struct space_map *sm, block_t b)
 static struct cache_entry *add_entry(struct space_map *sm, block_t b, uint32_t ref_count)
 {
 	struct cache_entry *ce = malloc(sizeof(*ce));
+
 	if (!ce)
 		return NULL;
 
@@ -143,10 +143,8 @@ struct space_map *sm_new(struct transaction_manager *tm,
 			 block_t nr_blocks)
 {
 	struct space_map *sm = sm_alloc(tm, nr_blocks);
-	if (sm) {
+	if (sm)
 		sm->initialised = 0;
-		// sm_inc_block(sm, 0);	/* FIXME: reserve */
-	}
 
 	return sm;
 }
@@ -320,7 +318,7 @@ static void ignore_leaf(uint64_t leaf, uint32_t *ref_counts)
 
 int sm_walk(struct space_map *sm, uint32_t *ref_counts)
 {
-	return btree_walk(sm->tm, ignore_leaf, sm->root, ref_counts);
+	return btree_walk(sm->tm, ignore_leaf, &sm->root, 1, ref_counts);
 }
 
 /*----------------------------------------------------------------*/

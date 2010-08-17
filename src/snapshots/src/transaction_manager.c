@@ -33,6 +33,7 @@ struct transaction_manager {
 	struct block_manager *bm;
 	struct space_map *sm;
 	struct transaction *t;
+	int pre_committed;
 };
 
 struct transaction_manager *tm_create(struct block_manager *bm)
@@ -41,11 +42,12 @@ struct transaction_manager *tm_create(struct block_manager *bm)
 	if (tm) {
 		tm->bm = bm;
 		tm->sm = sm_new(tm, bm_nr_blocks(bm));
-		tm->t = NULL;
 		if (!tm->sm) {
 			free(tm);
 			tm = NULL;
 		}
+		tm->t = NULL;
+		tm->pre_committed = 0;
 	}
 
 	return tm;
@@ -83,11 +85,16 @@ int tm_pre_commit(struct transaction_manager *tm, block_t *space_map_root)
 {
 	sm_flush(tm->sm, space_map_root);
 	bm_flush(tm->bm, 0);
+	tm->pre_committed = 1;
 	return 1;
 }
 
 int tm_commit(struct transaction_manager *tm, block_t root)
 {
+	if (!tm->pre_committed)
+		abort();
+	tm->pre_committed = 0;
+
 	bm_flush(tm->bm, 1);
 	bm_unlock(tm->bm, root, 1);
 	bm_flush(tm->bm, 1);

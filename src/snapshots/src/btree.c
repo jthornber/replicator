@@ -477,6 +477,11 @@ static int btree_walk_(struct transaction_manager *tm, leaf_fn lf,
 	struct node *n;
 	struct list *l;
 
+	/*
+	 * We increment even if we've seen this node, however we don't
+	 * walk its children.
+	 */
+	ref_counts[root]++;
 	list_iterate (l, seen) {
 		struct block_list *bl = list_struct_base(l, struct block_list, list);
 		if (bl->b == root)
@@ -488,10 +493,10 @@ static int btree_walk_(struct transaction_manager *tm, leaf_fn lf,
 		if (!bl)
 			return 0;
 
+		bl->b = root;
 		list_add(seen, &bl->list);
 	}
 
-	ref_counts[root]++;
 	if (!tm_read_lock(tm, root, (void **) &n)) {
 		abort();
 	}
