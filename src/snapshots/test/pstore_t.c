@@ -12,7 +12,7 @@
 #define NR_BLOCKS 102400
 
 /*----------------------------------------------------------------*/
-
+#if 0
 static void *zalloc(size_t len)
 {
 	void *r = malloc(len);
@@ -20,9 +20,10 @@ static void *zalloc(size_t len)
 		memset(r, 0, len);
 	return r;
 }
-
+#endif
 /*----------------------------------------------------------------*/
 
+/* FIXME: pull this function out into a test library */
 static int open_file()
 {
 	int i;
@@ -34,6 +35,12 @@ static int open_file()
 	memset(data, 0, sizeof(data));
 	for (i = 0; i < NR_BLOCKS; i++)
 		write(fd, data, sizeof(data));
+
+	fsync(fd);
+	close(fd);
+	fd = open("./block_file", O_RDWR | O_DIRECT | O_SYNC);
+	if (fd < 0)
+		abort();
 
 	return fd;
 }
@@ -479,7 +486,7 @@ int main(int argc, char **argv)
 	for (i = 0; i < sizeof(table_) / sizeof(*table_); i++) {
 		int fd = open_file();
 		struct exception_store *ps;
-		struct block_manager *bm = block_manager_create(fd, BLOCK_SIZE, NR_BLOCKS, 128);
+		struct block_manager *bm = block_manager_create(fd, BLOCK_SIZE, NR_BLOCKS, 64);
 
 		if (!bm)
 			abort();
@@ -495,6 +502,7 @@ int main(int argc, char **argv)
 		table_[i].fn(ps);
 		_estore_commit(ps);
 
+#if 0
 		{
 			char buffer[1024];
 			uint32_t *ref_counts = zalloc(sizeof(*ref_counts) * NR_BLOCKS);
@@ -503,6 +511,7 @@ int main(int argc, char **argv)
 			snprintf(buffer, sizeof(buffer), "%s.space_diff", table_[i].name);
 			assert(ps_diff_space_map(buffer, ps, ref_counts));
 		}
+#endif
 
 		estore_destroy(ps);
 		block_manager_destroy(bm);
