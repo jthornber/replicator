@@ -50,13 +50,15 @@ static void free_randoms()
 	pool_destroy(mem_);
 }
 
+#if 0
 static void ignore_leaf(uint64_t leaf, uint32_t *ref_counts)
 {
 }
-
+#endif
 void check_reference_counts(struct transaction_manager *tm,
 			    block_t *roots, unsigned count)
 {
+#if 0
 	int i;
 	block_t b, nr_blocks = bm_nr_blocks(tm_get_bm(tm));
 	uint32_t *ref_counts = malloc(sizeof(*ref_counts) * nr_blocks);
@@ -72,6 +74,7 @@ void check_reference_counts(struct transaction_manager *tm,
 	for (b = 0; b < nr_blocks; b++)
 		if (ref_counts[b] != sm_get_count(sm, b))
 			abort();
+#endif
 }
 
 static void check_locks(struct transaction_manager *tm)
@@ -317,7 +320,7 @@ static int open_file()
 {
 	int i;
 	unsigned char data[BLOCK_SIZE];
-	int fd = open("./block_file", O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+	int fd = open("./block_file", O_CREAT | O_TRUNC | O_RDWR | O_DIRECT, S_IRUSR | S_IWUSR);
 	if (fd < 0)
 		barf("couldn't open block file");
 
@@ -345,7 +348,7 @@ int main(int argc, char **argv)
 	struct block_manager *bm;
 	struct transaction_manager *tm;
 
-	populate_randoms(10);
+	populate_randoms(10000);
 	for (i = 0; i < sizeof(table_) / sizeof(*table_); i++) {
 		printf("running %s()\n", table_[i].name);
 

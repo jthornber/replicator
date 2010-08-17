@@ -145,7 +145,7 @@ int begin(void *context)
 	if (!tm_begin(ps->tm))
 		abort();
 
-	if (!bm_lock(ps->bm, ps->superblock, LOCK_WRITE, (void **) &ps->tl))
+	if (!bm_lock(ps->bm, ps->superblock, BM_LOCK_WRITE, (void **) &ps->tl))
 		abort();
 
 	return 1;

@@ -111,8 +111,10 @@ static int add_delta(struct space_map *sm, block_t b, int32_t delta)
 	if (ce->unwritten)
 		list_move(&sm->deltas, &ce->lru);
 
+#if 0
 	if (ce->delta < 0)
 		assert(ce->ref_count >= -ce->delta);
+#endif
 
 	return 1;
 }
