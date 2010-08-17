@@ -4,7 +4,7 @@
 # FIXME: add dependency generation.
 
 CC=gcc
-CFLAGS=-Wall -g -Werror
+CFLAGS=-Wall -g -Werror -D_GNU_SOURCE
 INCLUDES=\
 	-Iinclude
 
