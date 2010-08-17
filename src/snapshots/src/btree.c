@@ -515,9 +515,10 @@ static int btree_walk_(struct transaction_manager *tm, leaf_fn lf,
 }
 
 int btree_walk(struct transaction_manager *tm, leaf_fn lf,
-	       block_t root, uint32_t *ref_counts)
+	       block_t *roots, unsigned count, uint32_t *ref_counts)
 {
 	int r;
+	unsigned i;
 	struct list seen;
 	struct pool *mem = pool_create("", 1024);
 
@@ -525,16 +526,19 @@ int btree_walk(struct transaction_manager *tm, leaf_fn lf,
 		return 0;
 
 	list_init(&seen);
-	r = btree_walk_(tm, lf, root, 1, ref_counts, &seen, mem);
+	for (i = 0; i < count; i++)
+		r = btree_walk_(tm, lf, roots[i], 1, ref_counts, &seen, mem);
 	pool_destroy(mem);
 	return r;
 }
 
 
 int btree_walk_h(struct transaction_manager *tm, leaf_fn lf,
-		 block_t root, unsigned levels, uint32_t *ref_counts)
+		 block_t *roots, unsigned count,
+		 unsigned levels, uint32_t *ref_counts)
 {
 	int r;
+	unsigned i;
 	struct list seen;
 	struct pool *mem = pool_create("", 1024);
 
@@ -542,7 +546,8 @@ int btree_walk_h(struct transaction_manager *tm, leaf_fn lf,
 		return 0;
 
 	list_init(&seen);
-	r = btree_walk_(tm, lf, root, levels, ref_counts, &seen, mem);
+	for (i = 0; i < count; i++)
+		r = btree_walk_(tm, lf, roots[i], levels, ref_counts, &seen, mem);
 	pool_destroy(mem);
 	return r;
 }

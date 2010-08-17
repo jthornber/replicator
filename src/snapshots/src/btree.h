@@ -92,16 +92,20 @@ int btree_insert_h(struct transaction_manager *tm, block_t root,
  * map.  You can then compare with the space map in the transaction
  * manager.  This assumes no mutators are running.
  *
+ * If there is any sharing between btrees you must ensure these roots are
+ * walked within a single call to btree_walk.
+ *
  * The btree code doesn't know how the leaf values are to be interpreted,
  * are they blocks to be referenced or something else ?  So |leaf_fn| is
  * passed in to make this decision.
  */
 typedef void (*leaf_fn)(uint64_t leaf_value, uint32_t *ref_counts);
 int btree_walk(struct transaction_manager *tm, leaf_fn lf,
-	       block_t root, uint32_t *ref_counts);
+	       block_t *roots, unsigned count, uint32_t *ref_counts);
 
 int btree_walk_h(struct transaction_manager *tm, leaf_fn lf,
-		 block_t root, unsigned levels, uint32_t *ref_counts);
+		 block_t *roots, unsigned count,
+		 unsigned levels, uint32_t *ref_counts);
 
 /*----------------------------------------------------------------*/
 
