@@ -102,13 +102,17 @@ static struct block *alloc_block_(struct block_manager *bm)
 /* for now we just use aio on the write path */
 static int read_block(struct block_manager *bm, struct block *b)
 {
-	if (lseek(bm->fd, b->where * bm->block_size, SEEK_SET) < 0)
+	memset(&b->aiocb, 0, sizeof(b->aiocb));
+	b->aiocb.aio_fildes = bm->fd;
+	b->aiocb.aio_offset = b->where * bm->block_size;
+	b->aiocb.aio_buf = b->data;
+	b->aiocb.aio_nbytes = bm->block_size;
+	if (aio_read(&b->aiocb) < 0) {
+		abort();
 		return 0;
+	}
 
-	if (read(bm->fd, b->data, bm->block_size) < 0)
-		return 0;
-
-	bm->read_count++; /* FIXME: unprotected */
+	bm->read_count++;
 
 	if (bm->trace)
 		fprintf(bm->trace, "read %u\n", (unsigned) b->where);
@@ -128,7 +132,7 @@ static int write_block(struct block_manager *bm, struct block *b)
 		return 0;
 	}
 
-	bm->write_count++;	/* FIXME: unprotected */
+	bm->write_count++;
 
 	if (bm->trace)
 		fprintf(bm->trace, "write %u\n", (unsigned) b->where);
@@ -419,7 +423,7 @@ static int bm_lock_(struct block_manager *bm, block_t block, enum block_lock how
 		b->where = block;
 
 		if (need_read) {
-			if (!read_block(bm, b)) {
+			if (!read_block(bm, b) || !wait_io(bm, b)) {
 				free_block(bm, b);
 				return 0;
 			}
