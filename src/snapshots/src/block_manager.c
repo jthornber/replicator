@@ -146,23 +146,43 @@ static int write_block(struct block_manager *bm, struct block *b)
 	return 1;
 }
 
-static int check_io(struct block_manager *bm)
+static void complete_io(struct block_manager *bm, struct block *b)
 {
+	list_move(&bm->lru_list, &b->list);
+	b->dirty = 0;
+}
+
+static void fail_io(struct block_manager *bm, struct block *b)
+{
+	/* We just try again */
+	/* FIXME: add a retry limit */
+	if (b->dirty)
+		aio_write(&b->aiocb);
+	else
+		aio_read(&b->aiocb);
+}
+
+static unsigned check_io(struct block_manager *bm)
+{
+	unsigned count = 0;
 	struct block *b, *tmp;
 
 	list_iterate_items_safe (b, tmp, &bm->io_list) {
-		int r = aio_error(&b->aiocb);
-		if (r == EINPROGRESS)
-			continue;
+		switch (aio_error(&b->aiocb)) {
+		case 0:
+			complete_io(bm, b);
+			count++;
+			break;
 
-		if (r == 0) {
-			list_move(&bm->lru_list, &b->list);
-			b->dirty = 0;
-		} else
-			abort();
+		case EINPROGRESS:
+			break;
+
+		default:
+			fail_io(bm, b);
+		}
 	}
 
-	return 1;
+	return count;
 }
 
 static int wait_io(struct block_manager *bm, struct block *b)
@@ -184,11 +204,10 @@ static int wait_io(struct block_manager *bm, struct block *b)
 	{
 		int r = aio_return(&b->aiocb);
 		if (r != BLOCK_SIZE)
-			abort();
+			fail_io(bm, b);
 	}
 
-	list_move(&bm->lru_list, &b->list);
-	b->dirty = 0;
+	complete_io(bm, b);
 	return r == 0;
 }
 
@@ -199,13 +218,13 @@ static int wait_all_io(struct block_manager *bm)
 	list_iterate_items_safe (b, tmp, &bm->io_list) {
 		int r = wait_io(bm, b);
 		if (!r)
-			abort();
+			return 0;
 	}
 
 	return 1;
 }
 
-static int wait_any_io(struct block_manager *bm)
+static unsigned wait_any_io(struct block_manager *bm)
 {
 	int r;
 	struct block *b;
@@ -224,10 +243,9 @@ static int wait_any_io(struct block_manager *bm)
 	} while (r == EAGAIN || r == EINTR);
 
 	if (r < 0)
-		return 0;
+		abort();
 
-	check_io(bm);
-	return 1;
+	return check_io(bm);
 }
 
 static struct block *alloc_block(struct block_manager *bm)
@@ -235,32 +253,26 @@ static struct block *alloc_block(struct block_manager *bm)
 	if (bm->blocks_allocated > bm->cache_size && !list_empty(&bm->lru_list)) {
 		struct list *l, *tmp;
 
-		check_io(bm);
+		do {
+			/* reuse the head of the lru list */
+			list_iterate_safe (l, tmp, &bm->lru_list) {
+				struct block *b = list_struct_base(l, struct block, list);
 
-	retry:
-		/* reuse the head of the lru list */
-		list_iterate_safe (l, tmp, &bm->lru_list) {
-			struct block *b = list_struct_base(l, struct block, list);
-
-			if (b->dirty) {
-				write_block(bm, b);
-				continue;
+				if (b->dirty)
+					write_block(bm, b);
+				else {
+					list_del(&b->list);
+					list_del(&b->hash);
+					list_init(&b->list);
+					list_init(&b->hash);
+					b->dirty = 0;
+					b->read_count = 0;
+					b->write_count = 0;
+					return b;
+				}
 			}
 
-			list_del(&b->list);
-			list_del(&b->hash);
-			list_init(&b->list);
-			list_init(&b->hash);
-			b->dirty = 0;
-			b->read_count = 0;
-			b->write_count = 0;
-			return b;
-		}
-
-		if (!list_empty(&bm->io_list)) {
-			wait_any_io(bm);
-			goto retry;
-		}
+		} while (wait_any_io(bm) > 0);
 	}
 
 	return alloc_block_(bm);
