@@ -35,14 +35,12 @@ int create_file()
 			barf("write failed");
 	}
 
-#if 0
+	fsync(fd);
 	close(fd);
 
-	fd = open("./block_file", O_CREAT | O_TRUNC | O_RDWR | O_DIRECT | O_SYNC,
-		  S_IRUSR | S_IWUSR);
+	fd = open("./block_file", O_RDWR | O_DIRECT | O_SYNC);
 	if (fd < 0)
 		barf("couldn't reopen block file");
-#endif
 
 	return fd;
 }

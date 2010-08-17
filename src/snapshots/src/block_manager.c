@@ -17,6 +17,9 @@
  * 3) the top level code to tie these parts together
  */
 
+/*
+ * FIXME: use the 64bit variant of aio */
+
 /*----------------------------------------------------------------*/
 
 /*
@@ -99,7 +102,6 @@ static struct block *alloc_block_(struct block_manager *bm)
 	return b;
 }
 
-/* for now we just use aio on the write path */
 static int read_block(struct block_manager *bm, struct block *b)
 {
 	memset(&b->aiocb, 0, sizeof(b->aiocb));
@@ -107,6 +109,7 @@ static int read_block(struct block_manager *bm, struct block *b)
 	b->aiocb.aio_offset = b->where * bm->block_size;
 	b->aiocb.aio_buf = b->data;
 	b->aiocb.aio_nbytes = bm->block_size;
+
 	if (aio_read(&b->aiocb) < 0) {
 		abort();
 		return 0;
@@ -117,6 +120,7 @@ static int read_block(struct block_manager *bm, struct block *b)
 	if (bm->trace)
 		fprintf(bm->trace, "read %u\n", (unsigned) b->where);
 
+	list_move(&bm->io_list, &b->list);
 	return 1;
 }
 
@@ -127,6 +131,7 @@ static int write_block(struct block_manager *bm, struct block *b)
 	b->aiocb.aio_offset = b->where * bm->block_size;
 	b->aiocb.aio_buf = b->data;
 	b->aiocb.aio_nbytes = bm->block_size;
+
 	if (aio_write(&b->aiocb) < 0) {
 		abort();
 		return 0;
@@ -138,7 +143,6 @@ static int write_block(struct block_manager *bm, struct block *b)
 		fprintf(bm->trace, "write %u\n", (unsigned) b->where);
 
 	list_move(&bm->io_list, &b->list);
-
 	return 1;
 }
 
@@ -161,16 +165,30 @@ static int check_io(struct block_manager *bm)
 	return 1;
 }
 
-/* FIXME: busy wait ! */
 static int wait_io(struct block_manager *bm, struct block *b)
 {
 	int r;
+	struct aiocb const *ptrs[1];
+
+	ptrs[0] = &b->aiocb;
 
 	do {
-		r = aio_error(&b->aiocb);
-	} while (r == EINPROGRESS);
+		r = aio_suspend(ptrs, 1, NULL);
+	} while (r == EAGAIN || r == EINTR);
+
+	if (r < 0)
+		return 0;
+
+	r = aio_error(&b->aiocb);
+
+	{
+		int r = aio_return(&b->aiocb);
+		if (r != BLOCK_SIZE)
+			abort();
+	}
 
 	list_move(&bm->lru_list, &b->list);
+	b->dirty = 0;
 	return r == 0;
 }
 
@@ -187,6 +205,31 @@ static int wait_all_io(struct block_manager *bm)
 	return 1;
 }
 
+static int wait_any_io(struct block_manager *bm)
+{
+	int r;
+	struct block *b;
+	unsigned i, io_count = list_size(&bm->io_list);
+	struct aiocb const **cbs = malloc(sizeof(*cbs) * io_count);
+
+	if (!cbs)
+		return 0;
+
+	i = 0;
+	list_iterate_items (b, &bm->io_list)
+		cbs[i++] = &b->aiocb;
+
+	do {
+		r = aio_suspend(cbs, io_count, NULL);
+	} while (r == EAGAIN || r == EINTR);
+
+	if (r < 0)
+		return 0;
+
+	check_io(bm);
+	return 1;
+}
+
 static struct block *alloc_block(struct block_manager *bm)
 {
 	if (bm->blocks_allocated > bm->cache_size && !list_empty(&bm->lru_list)) {
@@ -194,6 +237,7 @@ static struct block *alloc_block(struct block_manager *bm)
 
 		check_io(bm);
 
+	retry:
 		/* reuse the head of the lru list */
 		list_iterate_safe (l, tmp, &bm->lru_list) {
 			struct block *b = list_struct_base(l, struct block, list);
@@ -213,7 +257,10 @@ static struct block *alloc_block(struct block_manager *bm)
 			return b;
 		}
 
-		/* FIXME: we should wait for io here */
+		if (!list_empty(&bm->io_list)) {
+			wait_any_io(bm);
+			goto retry;
+		}
 	}
 
 	return alloc_block_(bm);
@@ -231,7 +278,7 @@ static void free_block(struct block_manager *bm, struct block *b)
 	list_del(&b->hash);
 	free(b->alloc);
 	free(b);
-	bm->blocks_allocated--;  /* FIXME: unprotected */
+	bm->blocks_allocated--;
 }
 
 static void reap_lru(struct block_manager *bm)

@@ -320,13 +320,20 @@ static int open_file()
 {
 	int i;
 	unsigned char data[BLOCK_SIZE];
-	int fd = open("./block_file", O_CREAT | O_TRUNC | O_RDWR | O_DIRECT, S_IRUSR | S_IWUSR);
+	int fd = open("./block_file", O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
 	if (fd < 0)
 		barf("couldn't open block file");
 
 	memset(data, 0, sizeof(data));
 	for (i = 0; i < NR_BLOCKS; i++)
 		write(fd, data, sizeof(data));
+
+	fsync(fd);
+	close(fd);
+
+	fd = open("./block_file", O_RDWR | O_DIRECT | O_SYNC);
+	if (fd < 0)
+		barf("couldn't reopen block file");
 
 	return fd;
 }
@@ -352,7 +359,7 @@ int main(int argc, char **argv)
 	for (i = 0; i < sizeof(table_) / sizeof(*table_); i++) {
 		printf("running %s()\n", table_[i].name);
 
-		bm = block_manager_create(open_file(), BLOCK_SIZE, NR_BLOCKS, 1024);
+		bm = block_manager_create(open_file(), BLOCK_SIZE, NR_BLOCKS, 64);
 		tm = tm_create(bm);
 
 		table_[i].fn(tm);
