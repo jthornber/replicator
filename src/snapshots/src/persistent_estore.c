@@ -506,6 +506,7 @@ void ps_walk(struct exception_store *es, uint32_t *ref_counts)
 	if (!tm_read_lock(ps->tm, ps->superblock, (void **) &tl))
 		abort();
 
+	ref_counts[ps->superblock]++;
 	sm_walk(tm_get_sm(ps->tm), ref_counts);
 	btree_walk_h(ps->tm, block_values, &tl->origin_maps, 1, 2, ref_counts);
 	btree_walk_h(ps->tm, block_time_values, &tl->snapshot_maps, 1, 2, ref_counts);

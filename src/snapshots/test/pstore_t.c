@@ -12,7 +12,7 @@
 #define NR_BLOCKS 102400
 
 /*----------------------------------------------------------------*/
-#if 0
+
 static void *zalloc(size_t len)
 {
 	void *r = malloc(len);
@@ -20,7 +20,7 @@ static void *zalloc(size_t len)
 		memset(r, 0, len);
 	return r;
 }
-#endif
+
 /*----------------------------------------------------------------*/
 
 /* FIXME: pull this function out into a test library */
@@ -502,7 +502,6 @@ int main(int argc, char **argv)
 		table_[i].fn(ps);
 		_estore_commit(ps);
 
-#if 0
 		{
 			char buffer[1024];
 			uint32_t *ref_counts = zalloc(sizeof(*ref_counts) * NR_BLOCKS);
@@ -511,7 +510,6 @@ int main(int argc, char **argv)
 			snprintf(buffer, sizeof(buffer), "%s.space_diff", table_[i].name);
 			assert(ps_diff_space_map(buffer, ps, ref_counts));
 		}
-#endif
 
 		estore_destroy(ps);
 		block_manager_destroy(bm);
