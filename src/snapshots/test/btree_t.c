@@ -20,8 +20,8 @@ static struct list randoms_;
 
 struct number_list {
 	struct list list;
-	unsigned key;
-	unsigned value;
+	uint64_t key;
+	uint64_t value;
 };
 
 static void barf(const char *msg)
@@ -109,28 +109,29 @@ static void check_locks(struct transaction_manager *tm)
 		abort();
 }
 
-static void no_meaning(struct transaction_manager *tm, uint64_t value, int32_t delta)
-{
-}
-
 static void check_insert(struct transaction_manager *tm)
 {
 	uint64_t value;
 	struct number_list *nl;
 	block_t root = 0;
+	struct btree_info info;
+
+	info.tm = tm;
+	info.levels = 1;
+	info.adjust = value_is_meaningless;
 
 	tm_begin(tm);
-	if (!btree_empty(tm, &root))
+	if (!btree_empty(&info, &root))
 		abort();
 
 	list_iterate_items (nl, &randoms_)
-		if (!btree_insert(tm, root, no_meaning, nl->key, nl->value, &root))
+		if (!btree_insert(&info, root, &nl->key, nl->value, &root))
 			barf("insert");
 	commit(tm, root);
 	check_locks(tm);
 
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_lookup_equal(tm, root, nl->key, &value))
+		if (!btree_lookup_equal(&info, root, &nl->key, &value))
 			barf("lookup");
 
 		assert(value == nl->value);
@@ -146,17 +147,22 @@ static void check_multiple_commits(struct transaction_manager *tm)
 	uint64_t value;
 	struct number_list *nl;
 	block_t root = 0;
+	struct btree_info info;
+
+	info.tm = tm;
+	info.levels = 1;
+	info.adjust = value_is_meaningless;
 
 	struct block_manager *bm = tm_get_bm(tm);
 	bm_start_io_trace(bm, "multiple_commits.trace");
 
 	tm_begin(tm);
-	if (!btree_empty(tm, &root))
+	if (!btree_empty(&info, &root))
 		abort();
 
 	i = 0;
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_insert(tm, root, no_meaning, nl->key, nl->value, &root))
+		if (!btree_insert(&info, root, &nl->key, nl->value, &root))
 			barf("insert");
 		if (i++ % 100 == 0) {
 			bm_io_mark(bm, "commit");
@@ -170,7 +176,7 @@ static void check_multiple_commits(struct transaction_manager *tm)
 	check_locks(tm);
 
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_lookup_equal(tm, root, nl->key, &value))
+		if (!btree_lookup_equal(&info, root, &nl->key, &value))
 			barf("lookup");
 
 		assert(value == nl->value);
@@ -190,16 +196,22 @@ static void check_multiple_commits_contiguous(struct transaction_manager *tm)
 	uint64_t key, value;
 	struct number_list *nl;
 	block_t root = 0;
+	struct btree_info info;
+
+	info.tm = tm;
+	info.levels = 1;
+	info.adjust = value_is_meaningless;
 
 	tm_begin(tm);
-	if (!btree_empty(tm, &root))
+	if (!btree_empty(&info, &root))
 		abort();
 
 	i = 0;
 	key = 0;
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_insert(tm, root, no_meaning, key++, nl->value, &root))
+		if (!btree_insert(&info, root, &key, nl->value, &root))
 			barf("insert");
+		key++;
 		if (i++ % 100 == 0) {
 			commit(tm, root);
 			tm_begin(tm);
@@ -211,9 +223,9 @@ static void check_multiple_commits_contiguous(struct transaction_manager *tm)
 
 	key = 0;
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_lookup_equal(tm, root, key++, &value))
+		if (!btree_lookup_equal(&info, root, &key, &value))
 			barf("lookup");
-
+		key++;
 		assert(value == nl->value);
 	}
 	check_locks(tm);
@@ -245,20 +257,25 @@ static void check_insert_h(struct transaction_manager *tm)
 	uint64_t value;
 	block_t root = 0;
 	int i;
+	struct btree_info info;
+
+	info.tm = tm;
+	info.levels = 4;
+	info.adjust = value_is_meaningless;
 
 	tm_begin(tm);
-	if (!btree_empty(tm, &root))
+	if (!btree_empty(&info, &root))
 		abort();
 
 	for (i = 0; i < sizeof(table) / sizeof(*table); i++) {
-		if (!btree_insert_h(tm, root, no_meaning, table[i], 4, table[i][4], &root))
+		if (!btree_insert(&info, root, table[i], table[i][4], &root))
 			barf("insert");
 	}
 	commit(tm, root);
 	check_locks(tm);
 
 	for (i = 0; i < sizeof(table) / sizeof(*table); i++) {
-		if (!btree_lookup_equal_h(tm, root, table[i], 4, &value))
+		if (!btree_lookup_equal(&info, root, table[i], &value))
 			barf("lookup");
 
 		assert(value == table[i][4]);
@@ -270,12 +287,12 @@ static void check_insert_h(struct transaction_manager *tm)
 		uint64_t keys[4] = { 1, 1, 1, 4 }, value;
 
 		tm_begin(tm);
-		if (!btree_insert_h(tm, root, no_meaning, keys, 4, 2112, &root))
+		if (!btree_insert(&info, root, keys, 2112, &root))
 			barf("insert");
 		commit(tm, root);
 		check_locks(tm);
 
-		if (!btree_lookup_equal_h(tm, root, keys, 4, &value))
+		if (!btree_lookup_equal(&info, root, keys, &value))
 			barf("lookup");
 
 		assert(value == 2112);
@@ -284,14 +301,14 @@ static void check_insert_h(struct transaction_manager *tm)
 	/* check overwrites */
 	tm_begin(tm);
 	for (i = 0; i < sizeof(overwrites) / sizeof(*overwrites); i++) {
-		if (!btree_insert_h(tm, root, no_meaning, overwrites[i], 4, overwrites[i][4], &root))
+		if (!btree_insert(&info, root, overwrites[i], overwrites[i][4], &root))
 			barf("insert");
 	}
 	commit(tm, root);
 	check_locks(tm);
 
 	for (i = 0; i < sizeof(overwrites) / sizeof(*overwrites); i++) {
-		if (!btree_lookup_equal_h(tm, root, overwrites[i], 4, &value))
+		if (!btree_lookup_equal(&info, root, overwrites[i], &value))
 			barf("lookup");
 
 		assert(value == overwrites[i][4]);
@@ -304,24 +321,29 @@ static void check_clone(struct transaction_manager *tm)
 	uint64_t value;
 	struct number_list *nl;
 	block_t root, clone;
+	struct btree_info info;
+
+	info.tm = tm;
+	info.levels = 1;
+	info.adjust = value_is_meaningless;
 
 	tm_begin(tm);
 
-	if (!btree_empty(tm, &root))
+	if (!btree_empty(&info, &root))
 		abort();
 
 	list_iterate_items (nl, &randoms_)
-		if (!btree_insert(tm, root, no_meaning, nl->key, nl->value, &root))
+		if (!btree_insert(&info, root, &nl->key, nl->value, &root))
 			barf("insert");
 
-	btree_clone(tm, root, no_meaning, &clone);
+	btree_clone(&info, root, &clone);
 	assert(clone);
 
 	commit(tm, clone);
 	check_locks(tm);
 
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_lookup_equal(tm, clone, nl->key, &value))
+		if (!btree_lookup_equal(&info, clone, &nl->key, &value))
 			barf("lookup");
 
 		assert(value == nl->value);
@@ -340,8 +362,13 @@ static void check_clone(struct transaction_manager *tm)
 #define LBLOCKS 1000
 static void check_leaf_ref_counts(struct transaction_manager *tm)
 {
-	unsigned i;
+	uint64_t i;
 	block_t root = 0, clone, blocks[LBLOCKS], extra_block, key = 47;
+	struct btree_info info;
+
+	info.tm = tm;
+	info.levels = 1;
+	info.adjust = value_is_block;
 
 	tm_begin(tm);
 
@@ -351,16 +378,16 @@ static void check_leaf_ref_counts(struct transaction_manager *tm)
 			abort();
 
 	/* create a new btree */
-	if (!btree_empty(tm, &root))
+	if (!btree_empty(&info, &root))
 		abort();
 
 	/* insert the blocks */
 	for (i = 0; i < LBLOCKS; i++)
-		if (!btree_insert(tm, root, value_is_block, i, blocks[i], &root))
+		if (!btree_insert(&info, root, &i, blocks[i], &root))
 			abort();
 
 	/* now we clone, so there's sharing */
-	if (!btree_clone(tm, root, value_is_block, &clone))
+	if (!btree_clone(&info, root, &clone))
 		abort();
 
 	/*
@@ -372,7 +399,7 @@ static void check_leaf_ref_counts(struct transaction_manager *tm)
 	if (!tm_alloc_block(tm, &extra_block))
 		abort();
 
-	if (!btree_insert(tm, root, value_is_block, key, extra_block, &root))
+	if (!btree_insert(&info, root, &key, extra_block, &root))
 		abort();
 
 	commit(tm, root);

@@ -35,6 +35,8 @@ struct space_map {
 	struct transaction_manager *tm;
 	block_t nr_blocks;
 	int initialised;
+
+	struct btree_info info;
 	block_t root;
 	block_t last_allocated;
 
@@ -87,7 +89,7 @@ static int add_delta(struct space_map *sm, block_t b, int32_t delta)
 	if (!ce) {
 		uint64_t ref_count = 0;
 		if (sm->initialised) {
-			switch (btree_lookup_equal(sm->tm, sm->root, b, &ref_count)) {
+			switch (btree_lookup_equal(&sm->info, sm->root, &b, &ref_count)) {
 			case LOOKUP_ERROR:
 				return 0;
 
@@ -134,6 +136,9 @@ static struct space_map *sm_alloc(struct transaction_manager *tm, block_t nr_blo
 	sm->tm = tm;
 	sm->nr_blocks = nr_blocks;
 	sm->initialised = 1;
+	sm->info.tm = tm;
+	sm->info.levels = 1;
+	sm->info.adjust = value_is_meaningless;
 	sm->last_allocated = 0;
 
 	list_init(&sm->deltas);
@@ -194,8 +199,8 @@ int sm_new_block(struct space_map *sm, block_t *b)
 		if (!ce) {
 			uint64_t ref_count = 0;
 			if (sm->initialised) {
-				switch (btree_lookup_equal(sm->tm, sm->root,
-							   sm->last_allocated, &ref_count)) {
+				switch (btree_lookup_equal(&sm->info, sm->root,
+							   &sm->last_allocated, &ref_count)) {
 				case LOOKUP_ERROR:
 					return 0;
 
@@ -245,7 +250,7 @@ uint32_t sm_get_count(struct space_map *sm, block_t b)
 		return ce->ref_count + ce->delta;
 	else {
 		if (sm->initialised)
-			switch (btree_lookup_equal(sm->tm, sm->root, b, &rc)) {
+			switch (btree_lookup_equal(&sm->info, sm->root, &b, &rc)) {
 			case LOOKUP_ERROR:
 				abort();
 
@@ -274,8 +279,8 @@ static int flush_once(struct space_map *sm, block_t *new_root)
 		uint32_t shadow = ce->unwritten;
 
 		assert(ce->unwritten);
-		if (!btree_insert(sm->tm, *new_root, value_is_meaningless,
-				  ce->block, ce->ref_count + shadow, new_root))
+		if (!btree_insert(&sm->info, *new_root,
+				  &ce->block, ce->ref_count + shadow, new_root))
 			abort();
 
 		/*
@@ -293,7 +298,7 @@ int sm_flush(struct space_map *sm, block_t *new_root)
 {
 	unsigned i;
 	if (!sm->initialised) {
-		if (!btree_empty(sm->tm, &sm->root))
+		if (!btree_empty(&sm->info, &sm->root))
 			return 0;
 	}
 

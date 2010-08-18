@@ -86,11 +86,11 @@ static void insert_at(struct node *node, unsigned index, uint64_t key, uint64_t 
 
 /*----------------------------------------------------------------*/
 
-int btree_empty(struct transaction_manager *tm, block_t *root)
+int btree_empty(struct btree_info *info, block_t *root)
 {
 	struct node *node;
 
-	if (!tm_new_block(tm, root, (void **) &node)) {
+	if (!tm_new_block(info->tm, root, (void **) &node)) {
 		/* FIXME: finish */
 		return 0;
 	}
@@ -99,13 +99,13 @@ int btree_empty(struct transaction_manager *tm, block_t *root)
 	node->header.flags = LEAF_NODE;
 	node->header.nr_entries = 0;
 
-	tm_write_unlock(tm, *root);
+	tm_write_unlock(info->tm, *root);
 
 	return 1;
 }
 
 static enum lookup_result
-btree_lookup_raw(struct transaction_manager *tm, block_t root,
+btree_lookup_raw(struct btree_info *info, block_t root,
 		 uint64_t key, int (*search_fn)(struct node *, uint64_t),
 		 uint64_t *result_key, uint64_t *value, block_t *leaf_block)
 {
@@ -114,18 +114,18 @@ btree_lookup_raw(struct transaction_manager *tm, block_t root,
         struct node *node;
 
 	do {
-		if (!tm_read_lock(tm, block, (void **) &node)) {
+		if (!tm_read_lock(info->tm, block, (void **) &node)) {
 			if (parent)
-				tm_read_unlock(tm, parent);
+				tm_read_unlock(info->tm, parent);
 			return LOOKUP_ERROR;
 		}
 
 		if (parent)
-			tm_read_unlock(tm, parent);
+			tm_read_unlock(info->tm, parent);
 
 		i = search_fn(node, key);
 		if (i < 0 || i >= node->header.nr_entries) {
-			tm_read_unlock(tm, block);
+			tm_read_unlock(info->tm, block);
 			return LOOKUP_NOT_FOUND;
 		}
 
@@ -140,24 +140,25 @@ btree_lookup_raw(struct transaction_manager *tm, block_t root,
 	return LOOKUP_FOUND;
 }
 
-int btree_lookup_equal_h(struct transaction_manager *tm, block_t root,
-			 uint64_t *keys, unsigned levels,
-			 uint64_t *value)
+enum lookup_result
+btree_lookup_equal(struct btree_info *info,
+		   block_t root, uint64_t *keys,
+		   uint64_t *value)
 {
 	unsigned level;
 	enum lookup_result r;
 	uint64_t rkey;
 	block_t leaf, old_leaf = 0;
 
-	for (level = 0; level < levels; level++) {
-		r = btree_lookup_raw(tm, root, keys[level], lower_bound, &rkey, value, &leaf);
+	for (level = 0; level < info->levels; level++) {
+		r = btree_lookup_raw(info, root, keys[level], lower_bound, &rkey, value, &leaf);
 
 		if (old_leaf)
-			tm_read_unlock(tm, old_leaf);
+			tm_read_unlock(info->tm, old_leaf);
 
 		if (r == LOOKUP_FOUND) {
 			if (rkey != keys[level]) {
-				tm_read_unlock(tm, leaf);
+				tm_read_unlock(info->tm, leaf);
 				return LOOKUP_NOT_FOUND;
 			}
 		} else
@@ -167,23 +168,24 @@ int btree_lookup_equal_h(struct transaction_manager *tm, block_t root,
 		root = *value;
 	}
 
-	tm_read_unlock(tm, leaf);
+	tm_read_unlock(info->tm, leaf);
 	return r;
 }
 
-int btree_lookup_le_h(struct transaction_manager *tm, block_t root,
-		      uint64_t *keys, unsigned levels,
-		      uint64_t *key, uint64_t *value)
+enum lookup_result
+btree_lookup_le(struct btree_info *info,
+		block_t root, uint64_t *keys,
+		uint64_t *key, uint64_t *value)
 {
 	unsigned level;
 	enum lookup_result r;
 	block_t leaf, old_leaf = 0;
 
-	for (level = 0; level < levels; level++) {
-		r = btree_lookup_raw(tm, root, keys[level], lower_bound, key, value, &leaf);
+	for (level = 0; level < info->levels; level++) {
+		r = btree_lookup_raw(info, root, keys[level], lower_bound, key, value, &leaf);
 
 		if (old_leaf)
-			tm_read_unlock(tm, old_leaf);
+			tm_read_unlock(info->tm, old_leaf);
 
 		if (r != LOOKUP_FOUND)
 			return r;
@@ -192,23 +194,24 @@ int btree_lookup_le_h(struct transaction_manager *tm, block_t root,
 		root = *value;
 	}
 
-	tm_read_unlock(tm, old_leaf);
+	tm_read_unlock(info->tm, old_leaf);
 	return r;
 }
 
-int btree_lookup_ge_h(struct transaction_manager *tm, block_t root,
-		      uint64_t *keys, unsigned levels,
-		      uint64_t *key, uint64_t *value)
+enum lookup_result
+btree_lookup_ge(struct btree_info *info,
+		block_t root, uint64_t *keys,
+		uint64_t *key, uint64_t *value)
 {
 	unsigned level;
 	enum lookup_result r;
 	block_t leaf, old_leaf = 0;
 
-	for (level = 0; level < levels; level++) {
-		r = btree_lookup_raw(tm, root, keys[level], upper_bound, key, value, &leaf);
+	for (level = 0; level < info->levels; level++) {
+		r = btree_lookup_raw(info, root, keys[level], upper_bound, key, value, &leaf);
 
 		if (old_leaf)
-			tm_read_unlock(tm, old_leaf);
+			tm_read_unlock(info->tm, old_leaf);
 
 		if (r != LOOKUP_FOUND)
 			return r;
@@ -217,29 +220,8 @@ int btree_lookup_ge_h(struct transaction_manager *tm, block_t root,
 		root = *value;
 	}
 
-	tm_read_unlock(tm, old_leaf);
+	tm_read_unlock(info->tm, old_leaf);
 	return r;
-}
-
-enum lookup_result
-btree_lookup_equal(struct transaction_manager *tm, block_t root,
-		   uint64_t key, uint64_t *value)
-{
-	return btree_lookup_equal_h(tm, root, &key, 1, value);
-}
-
-enum lookup_result
-btree_lookup_le(struct transaction_manager *tm, block_t root,
-		uint64_t key, uint64_t *rkey, uint64_t *value)
-{
-	return btree_lookup_le_h(tm, root, &key, 1, rkey, value);
-}
-
-enum lookup_result
-btree_lookup_ge(struct transaction_manager *tm, block_t root,
-		uint64_t key, uint64_t *rkey, uint64_t *value)
-{
-	return btree_lookup_ge_h(tm, root, &key, 1, rkey, value);
 }
 
 /*
@@ -398,26 +380,26 @@ static int btree_insert_raw(struct transaction_manager *tm, block_t root, count_
 	return 1;
 }
 
-int btree_insert_h(struct transaction_manager *tm, block_t root, count_adjust_fn fn,
-		   uint64_t *keys, unsigned levels,
-		   uint64_t value, block_t *new_root)
+int btree_insert(struct btree_info *info, block_t root,
+		 uint64_t *keys, uint64_t value,
+		 block_t *new_root)
 {
 	int need_insert;
-	unsigned level, index, last_level = levels - 1;
+	unsigned level, index, last_level = info->levels - 1;
 	block_t leaf, old_leaf = 0, *block;
 	struct node *leaf_node;
 
 	*new_root = root;
 	block = new_root;
 
-	for (level = 0; level < levels; level++) {
-		if (!btree_insert_raw(tm, *block,
-				      level == last_level ? fn : value_is_block,
+	for (level = 0; level < info->levels; level++) {
+		if (!btree_insert_raw(info->tm, *block,
+				      level == last_level ? info->adjust : value_is_block,
 				      keys[level], block, &leaf, &leaf_node, &index))
 			abort();
 
 		if (old_leaf)
-			tm_write_unlock(tm, old_leaf);
+			tm_write_unlock(info->tm, old_leaf);
 
 		need_insert = ((index >= leaf_node->header.nr_entries) ||
 			       (leaf_node->keys[index] != keys[level]));
@@ -426,13 +408,13 @@ int btree_insert_h(struct transaction_manager *tm, block_t root, count_adjust_fn
 			if (need_insert)
 				insert_at(leaf_node, index, keys[level], value);
 			else {
-				fn(tm, leaf_node->values[index], -1);
+				info->adjust(info->tm, leaf_node->values[index], -1);
 				leaf_node->values[index] = value;
 			}
 		} else {
 			if (need_insert) {
 				block_t new_root;
-				if (!btree_empty(tm, &new_root))
+				if (!btree_empty(info, &new_root))
 					abort();
 
 				insert_at(leaf_node, index, keys[level], new_root);
@@ -443,32 +425,25 @@ int btree_insert_h(struct transaction_manager *tm, block_t root, count_adjust_fn
 		block = leaf_node->values + index;
 	}
 
-	tm_write_unlock(tm, leaf);
+	tm_write_unlock(info->tm, leaf);
 	return 1;
 }
 
-int btree_insert(struct transaction_manager *tm, block_t root, count_adjust_fn fn,
-		 uint64_t key, uint64_t value,
-		 block_t *new_root)
-{
-	return btree_insert_h(tm, root, fn, &key, 1, value, new_root);
-}
-
-int btree_clone(struct transaction_manager *tm, block_t root, count_adjust_fn fn, block_t *clone)
+int btree_clone(struct btree_info *info, block_t root, block_t *clone)
 {
 	struct node *clone_node, *orig_node;
 
 	/* Copy the root node */
-	if (!tm_new_block(tm, clone, (void **) &clone_node))
+	if (!tm_new_block(info->tm, clone, (void **) &clone_node))
 		return 0;
 
-	if (!tm_read_lock(tm, root, (void **) &orig_node))
+	if (!tm_read_lock(info->tm, root, (void **) &orig_node))
 		abort();
 
 	memcpy(clone_node, orig_node, sizeof(*clone_node));
-	tm_read_unlock(tm, root);
-	inc_children(tm, clone_node, fn);
-	tm_write_unlock(tm, *clone);
+	tm_read_unlock(info->tm, root);
+	inc_children(info->tm, clone_node, info->adjust);
+	tm_write_unlock(info->tm, *clone);
 
 	return 1;
 }

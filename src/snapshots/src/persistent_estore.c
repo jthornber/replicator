@@ -32,6 +32,12 @@ struct pstore {
 	struct block_manager *bm;
 	struct transaction_manager *tm;
 
+	struct btree_info origin_map_info;
+	struct btree_info snapshot_tl_map_info; /* the top level, so we can
+						 * insert clones of other
+						 * snaps */
+	struct btree_info snapshot_map_info;
+
 	uint64_t time;
 
 	block_t superblock;	/* this is where the top level node always lives */
@@ -175,8 +181,8 @@ static enum io_result origin_read_since(struct pstore *ps,
 	keys[0] = from->dev;
 	keys[1] = pack_block_time(from->block, since);
 
-	switch (btree_lookup_ge_h(ps->tm, ps->tl->origin_maps, keys, 2,
-				  &result_key, &result_value)) {
+	switch (btree_lookup_ge(&ps->origin_map_info, ps->tl->origin_maps, keys,
+				&result_key, &result_value)) {
 	case LOOKUP_ERROR:
 		return IO_ERROR;
 
@@ -206,7 +212,7 @@ static enum io_result snapshot_exception(struct pstore *ps,
 		abort();
 
 	value = pack_block_time(cow_dest, ps->time);
-	if (!btree_insert_h(ps->tm, ps->tl->snapshot_maps, keys, 2, value, &ps->tl->snapshot_maps))
+	if (!btree_insert(&ps->snapshot_map_info, ps->tl->snapshot_maps, keys, value, &ps->tl->snapshot_maps))
 		abort();
 
 	to->dev = ps->dev;
@@ -227,7 +233,7 @@ enum io_result snapshot_map(void *context,
 	keys[0] = from->dev;
 	keys[1] = from->block;
 
-	switch (btree_lookup_equal_h(ps->tm, ps->tl->snapshot_maps, keys, 2,
+	switch (btree_lookup_equal(&ps->snapshot_map_info, ps->tl->snapshot_maps, keys,
 				     &result_value))
 	{
 	case LOOKUP_ERROR:
@@ -293,7 +299,7 @@ static enum io_result origin_exception(struct pstore *ps,
 	if (!tm_alloc_block(ps->tm, &cow_dest))
 		abort();
 
-	if (!btree_insert_h(ps->tm, ps->tl->origin_maps, keys, 2, cow_dest, &ps->tl->origin_maps))
+	if (!btree_insert(&ps->origin_map_info, ps->tl->origin_maps, keys, cow_dest, &ps->tl->origin_maps))
 		abort();
 
 	to->dev = ps->dev;
@@ -311,8 +317,8 @@ enum io_result origin_write(void *context,
 	keys[0] = from->dev;
 	keys[1] = pack_block_time(from->block, ps->time);
 
-	switch (btree_lookup_equal_h(ps->tm, ps->tl->origin_maps,
-				     keys, 2, &result_value)) {
+	switch (btree_lookup_equal(&ps->origin_map_info, ps->tl->origin_maps,
+				     keys, &result_value)) {
 	case LOOKUP_ERROR:
 		return IO_ERROR;
 
@@ -350,7 +356,7 @@ int new_snapshot(void *context, dev_t origin, dev_t snap)
 		sd->creation_time = sd2->creation_time;
 		sd->actual_origin = sd2->actual_origin;
 
-		switch (btree_lookup_equal(ps->tm, ps->tl->snapshot_maps, origin, &orig_root)) {
+		switch (btree_lookup_equal(&ps->snapshot_tl_map_info, ps->tl->snapshot_maps, &origin, &orig_root)) {
 		case LOOKUP_ERROR:
 			abort();
 
@@ -361,7 +367,7 @@ int new_snapshot(void *context, dev_t origin, dev_t snap)
 			break;
 		}
 
-		if (!btree_clone(ps->tm, orig_root, &new_tree))
+		if (!btree_clone(&ps->snapshot_map_info, orig_root, &new_tree))
 			abort();
 
 		sd2->last_snap_time = ps->time;
@@ -378,11 +384,11 @@ int new_snapshot(void *context, dev_t origin, dev_t snap)
 		 */
 	} else {
 		sd->actual_origin = origin;
-		if (!btree_empty(ps->tm, &new_tree))
+		if (!btree_empty(&ps->snapshot_map_info, &new_tree))
 			abort();
 	}
 
-	if (!btree_insert(ps->tm, ps->tl->snapshot_maps, snap, new_tree, &ps->tl->snapshot_maps))
+	if (!btree_insert(&ps->snapshot_tl_map_info, ps->tl->snapshot_maps, &snap, new_tree, &ps->tl->snapshot_maps))
 		abort();
 	list_add(&ps->snaps, &sd->list);
 	return 1;
@@ -413,13 +419,21 @@ static int create_top_level(struct pstore *ps)
 	begin(ps);
 
 	memset(ps->tl, 0, sizeof(*ps->tl));
-	if (!btree_empty(ps->tm, &ps->tl->origin_maps))
+	if (!btree_empty(&ps->origin_map_info, &ps->tl->origin_maps))
 		abort();
 
-	if (!btree_empty(ps->tm, &ps->tl->snapshot_maps))
+	if (!btree_empty(&ps->snapshot_map_info, &ps->tl->snapshot_maps))
 		abort();
 
 	return commit(ps);
+}
+
+static void value_is_block_time(struct transaction_manager *tm, uint64_t value, int32_t delta)
+{
+	block_t b;
+	uint64_t t;
+	unpack_block_time(value, &b, &t);
+	value_is_block(tm, b, delta);
 }
 
 struct exception_store *persistent_store_create(struct block_manager *bm, dev_t dev)
@@ -439,6 +453,18 @@ struct exception_store *persistent_store_create(struct block_manager *bm, dev_t 
 		ps->superblock = 0;
 		tm_reserve_block(ps->tm, ps->superblock);
 		ps->tl = NULL;
+
+		ps->origin_map_info.tm = ps->tm;
+		ps->origin_map_info.levels = 2;
+		ps->origin_map_info.adjust = value_is_block;
+
+		ps->snapshot_tl_map_info.tm = ps->tm;
+		ps->snapshot_tl_map_info.levels = 1;
+		ps->snapshot_tl_map_info.adjust = value_is_block;
+
+		ps->snapshot_map_info.tm = ps->tm;
+		ps->snapshot_map_info.levels = 2;
+		ps->snapshot_map_info.adjust = value_is_block_time;
 
 		list_init(&ps->snaps);
 
@@ -481,8 +507,8 @@ void ps_walk(struct exception_store *es, uint32_t *ref_counts)
 		abort();
 
 	sm_walk(tm_get_sm(ps->tm), ref_counts);
-	btree_walk_h(ps->tm, block_values, 2, tl->origin_maps, ref_counts);
-	btree_walk_h(ps->tm, block_time_values, 2, tl->snapshot_maps, ref_counts);
+	btree_walk_h(ps->tm, block_values, &tl->origin_maps, 1, 2, ref_counts);
+	btree_walk_h(ps->tm, block_time_values, &tl->snapshot_maps, 1, 2, ref_counts);
 
 	tm_read_unlock(ps->tm, ps->superblock);
 }
