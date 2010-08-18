@@ -65,16 +65,13 @@ static void ignore_leaf(uint64_t leaf, uint32_t *ref_counts)
 {
 }
 
-void check_reference_counts(struct transaction_manager *tm,
-			    block_t *roots, unsigned count)
+void check_reference_counts_(struct transaction_manager *tm,
+			     block_t *roots, unsigned count,
+			     uint32_t *ref_counts, block_t nr_blocks)
 {
-	block_t b, nr_blocks = bm_nr_blocks(tm_get_bm(tm));
-	uint32_t *ref_counts = malloc(sizeof(*ref_counts) * nr_blocks);
+	block_t b;
         struct space_map *sm = tm_get_sm(tm);
 
-	assert(ref_counts);
-
-	memset(ref_counts, 0, sizeof(*ref_counts) * nr_blocks);
 	btree_walk(tm, ignore_leaf, roots, count, ref_counts);
 	sm_walk(sm, ref_counts);
 
@@ -84,6 +81,17 @@ void check_reference_counts(struct transaction_manager *tm,
 				(unsigned) b, sm_get_count(sm, b), ref_counts[b]);
 			abort();
 		}
+}
+
+void check_reference_counts(struct transaction_manager *tm,
+			    block_t *roots, unsigned count)
+{
+	block_t nr_blocks = bm_nr_blocks(tm_get_bm(tm));
+	uint32_t *ref_counts = malloc(sizeof(*ref_counts) * nr_blocks);
+
+	assert(ref_counts);
+	memset(ref_counts, 0, sizeof(*ref_counts) * nr_blocks);
+	check_reference_counts_(tm, roots, count, ref_counts, nr_blocks);
 }
 
 static void check_locks(struct transaction_manager *tm)
@@ -101,6 +109,10 @@ static void check_locks(struct transaction_manager *tm)
 		abort();
 }
 
+static void no_meaning(struct transaction_manager *tm, uint64_t value, int32_t delta)
+{
+}
+
 static void check_insert(struct transaction_manager *tm)
 {
 	uint64_t value;
@@ -112,7 +124,7 @@ static void check_insert(struct transaction_manager *tm)
 		abort();
 
 	list_iterate_items (nl, &randoms_)
-		if (!btree_insert(tm, root, nl->key, nl->value, &root))
+		if (!btree_insert(tm, root, no_meaning, nl->key, nl->value, &root))
 			barf("insert");
 	commit(tm, root);
 	check_locks(tm);
@@ -144,7 +156,7 @@ static void check_multiple_commits(struct transaction_manager *tm)
 
 	i = 0;
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_insert(tm, root, nl->key, nl->value, &root))
+		if (!btree_insert(tm, root, no_meaning, nl->key, nl->value, &root))
 			barf("insert");
 		if (i++ % 100 == 0) {
 			bm_io_mark(bm, "commit");
@@ -186,7 +198,7 @@ static void check_multiple_commits_contiguous(struct transaction_manager *tm)
 	i = 0;
 	key = 0;
 	list_iterate_items (nl, &randoms_) {
-		if (!btree_insert(tm, root, key++, nl->value, &root))
+		if (!btree_insert(tm, root, no_meaning, key++, nl->value, &root))
 			barf("insert");
 		if (i++ % 100 == 0) {
 			commit(tm, root);
@@ -239,7 +251,7 @@ static void check_insert_h(struct transaction_manager *tm)
 		abort();
 
 	for (i = 0; i < sizeof(table) / sizeof(*table); i++) {
-		if (!btree_insert_h(tm, root, table[i], 4, table[i][4], &root))
+		if (!btree_insert_h(tm, root, no_meaning, table[i], 4, table[i][4], &root))
 			barf("insert");
 	}
 	commit(tm, root);
@@ -258,7 +270,7 @@ static void check_insert_h(struct transaction_manager *tm)
 		uint64_t keys[4] = { 1, 1, 1, 4 }, value;
 
 		tm_begin(tm);
-		if (!btree_insert_h(tm, root, keys, 4, 2112, &root))
+		if (!btree_insert_h(tm, root, no_meaning, keys, 4, 2112, &root))
 			barf("insert");
 		commit(tm, root);
 		check_locks(tm);
@@ -272,7 +284,7 @@ static void check_insert_h(struct transaction_manager *tm)
 	/* check overwrites */
 	tm_begin(tm);
 	for (i = 0; i < sizeof(overwrites) / sizeof(*overwrites); i++) {
-		if (!btree_insert_h(tm, root, overwrites[i], 4, overwrites[i][4], &root))
+		if (!btree_insert_h(tm, root, no_meaning, overwrites[i], 4, overwrites[i][4], &root))
 			barf("insert");
 	}
 	commit(tm, root);
@@ -299,10 +311,10 @@ static void check_clone(struct transaction_manager *tm)
 		abort();
 
 	list_iterate_items (nl, &randoms_)
-		if (!btree_insert(tm, root, nl->key, nl->value, &root))
+		if (!btree_insert(tm, root, no_meaning, nl->key, nl->value, &root))
 			barf("insert");
 
-	btree_clone(tm, root, &clone);
+	btree_clone(tm, root, no_meaning, &clone);
 	assert(clone);
 
 	commit(tm, clone);
@@ -323,6 +335,55 @@ static void check_clone(struct transaction_manager *tm)
 	}
 
 	/* FIXME: try deleting |root| */
+}
+
+#define LBLOCKS 1000
+static void check_leaf_ref_counts(struct transaction_manager *tm)
+{
+	unsigned i;
+	block_t root = 0, clone, blocks[LBLOCKS], extra_block, key = 47;
+
+	tm_begin(tm);
+
+	/* get some blocks */
+	for (i = 0; i < LBLOCKS; i++)
+		if (!tm_alloc_block(tm, blocks + i))
+			abort();
+
+	/* create a new btree */
+	if (!btree_empty(tm, &root))
+		abort();
+
+	/* insert the blocks */
+	for (i = 0; i < LBLOCKS; i++)
+		if (!btree_insert(tm, root, value_is_block, i, blocks[i], &root))
+			abort();
+
+	/* now we clone, so there's sharing */
+	if (!btree_clone(tm, root, value_is_block, &clone))
+		abort();
+
+	/*
+	 * Finally we overwrite a value in the middle of a block.  This
+	 * should force the sharing to occur at the leaves.  We expect
+	 * reference counts in the space map to be 2 for blocks that share
+	 * a leaf node with the new value.
+	 */
+	if (!tm_alloc_block(tm, &extra_block))
+		abort();
+
+	if (!btree_insert(tm, root, value_is_block, key, extra_block, &root))
+		abort();
+
+	commit(tm, root);
+
+	{
+		struct space_map *sm = tm_get_sm(tm);
+		assert(sm_get_count(sm, blocks[key]) == 0);
+		assert(sm_get_count(sm, extra_block) == 1);
+		assert(sm_get_count(sm, blocks[key - 1]) == 2);
+		assert(sm_get_count(sm, blocks[key + 1]) == 2);
+	}
 }
 
 static int open_file()
@@ -357,7 +418,8 @@ int main(int argc, char **argv)
 		{ "check_multiple_commits", check_multiple_commits },
 		{ "check_multiple_commits_contiguous", check_multiple_commits_contiguous },
 		{ "check_clone", check_clone },
-		{ "check_insert_h", check_insert_h }
+		{ "check_insert_h", check_insert_h },
+		{ "check leaf ref counts", check_leaf_ref_counts }
 	};
 
 	int i;

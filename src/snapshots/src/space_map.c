@@ -110,8 +110,12 @@ static int add_delta(struct space_map *sm, block_t b, int32_t delta)
 
 	if (ce->unwritten)
 		list_move(&sm->deltas, &ce->lru);
+	else {
+		/* deltas have cancelled each other out */
+		list_del(&ce->lru);
+	}
 
-#if 0
+#if 1
 	if (ce->delta < 0)
 		assert(ce->ref_count >= -ce->delta);
 #endif
@@ -270,7 +274,8 @@ static int flush_once(struct space_map *sm, block_t *new_root)
 		uint32_t shadow = ce->unwritten;
 
 		assert(ce->unwritten);
-		if (!btree_insert(sm->tm, *new_root, ce->block, ce->ref_count + shadow, new_root))
+		if (!btree_insert(sm->tm, *new_root, value_is_meaningless,
+				  ce->block, ce->ref_count + shadow, new_root))
 			abort();
 
 		/*

@@ -56,12 +56,15 @@ static int upper_bound(struct node *n, uint64_t key)
 	return i;
 }
 
-static void inc_children(struct transaction_manager *tm, struct node *n)
+static void inc_children(struct transaction_manager *tm, struct node *n, count_adjust_fn fn)
 {
 	unsigned i;
 	if (n->header.flags & INTERNAL_NODE)
 		for (i = 0; i < n->header.nr_entries; i++)
 			tm_inc(tm, n->values[i]);
+	else
+		for (i = 0; i < n->header.nr_entries; i++)
+			fn(tm, n->values[i], 1);
 }
 
 static void insert_at(struct node *node, unsigned index, uint64_t key, uint64_t value)
@@ -243,7 +246,8 @@ btree_lookup_ge(struct transaction_manager *tm, block_t root,
  * Splits a full node.  Returning the desired side, indicated by |key|, in
  * |node_block| and |node|.
  */
-static int btree_split(struct transaction_manager *tm, block_t block, struct node *node,
+static int btree_split(struct transaction_manager *tm, block_t block, count_adjust_fn fn,
+		       struct node *node,
 		       block_t parent_block, struct node *parent_node, unsigned parent_index,
 		       block_t *result, struct node **result_node)
 {
@@ -259,7 +263,7 @@ static int btree_split(struct transaction_manager *tm, block_t block, struct nod
 		abort();
 
 	if (inc)
-		inc_children(tm, left);
+		inc_children(tm, left, fn);
 
 	if (!tm_new_block(tm, &right_block, (void **) &right))
 		abort();
@@ -319,7 +323,7 @@ static int btree_split(struct transaction_manager *tm, block_t block, struct nod
 	return 1;
 }
 
-static int btree_insert_raw(struct transaction_manager *tm, block_t root, uint64_t key,
+static int btree_insert_raw(struct transaction_manager *tm, block_t root, count_adjust_fn fn, uint64_t key,
 			    block_t *new_root, block_t *leaf,
 			    struct node **leaf_node, unsigned *index)
 {
@@ -337,13 +341,13 @@ static int btree_insert_raw(struct transaction_manager *tm, block_t root, uint64
 		}
 
 		if (inc)
-			inc_children(tm, node);
+			inc_children(tm, node, fn);
 
 		if (node->header.nr_entries == MAX_ENTRIES) {
 			/* FIXME: horrible hack */
 			tmp_block = *block;
 			block = &tmp_block;
-			if (!btree_split(tm, *block, node,
+			if (!btree_split(tm, *block, fn, node,
 					 parent_block, parent_node, parent_index,
 					 block, &node))
 				/* FIXME: handle this */
@@ -386,12 +390,15 @@ static int btree_insert_raw(struct transaction_manager *tm, block_t root, uint64
 	if (i < 0 || node->keys[i] != key)
 		i++;
 
-	*index = i;
+	/* we're about to overwrite this value, so undo the increment for it */
+	if (node->keys[i] == key && inc)
+		fn(tm, node->values[i], -1);
 
+	*index = i;
 	return 1;
 }
 
-int btree_insert_h(struct transaction_manager *tm, block_t root,
+int btree_insert_h(struct transaction_manager *tm, block_t root, count_adjust_fn fn,
 		   uint64_t *keys, unsigned levels,
 		   uint64_t value, block_t *new_root)
 {
@@ -404,7 +411,9 @@ int btree_insert_h(struct transaction_manager *tm, block_t root,
 	block = new_root;
 
 	for (level = 0; level < levels; level++) {
-		if (!btree_insert_raw(tm, *block, keys[level], block, &leaf, &leaf_node, &index))
+		if (!btree_insert_raw(tm, *block,
+				      level == last_level ? fn : value_is_block,
+				      keys[level], block, &leaf, &leaf_node, &index))
 			abort();
 
 		if (old_leaf)
@@ -416,8 +425,10 @@ int btree_insert_h(struct transaction_manager *tm, block_t root,
 		if (level == last_level) {
 			if (need_insert)
 				insert_at(leaf_node, index, keys[level], value);
-			else
+			else {
+				fn(tm, leaf_node->values[index], -1);
 				leaf_node->values[index] = value;
+			}
 		} else {
 			if (need_insert) {
 				block_t new_root;
@@ -436,14 +447,14 @@ int btree_insert_h(struct transaction_manager *tm, block_t root,
 	return 1;
 }
 
-int btree_insert(struct transaction_manager *tm, block_t root,
+int btree_insert(struct transaction_manager *tm, block_t root, count_adjust_fn fn,
 		 uint64_t key, uint64_t value,
 		 block_t *new_root)
 {
-	return btree_insert_h(tm, root, &key, 1, value, new_root);
+	return btree_insert_h(tm, root, fn, &key, 1, value, new_root);
 }
 
-int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone)
+int btree_clone(struct transaction_manager *tm, block_t root, count_adjust_fn fn, block_t *clone)
 {
 	struct node *clone_node, *orig_node;
 
@@ -456,10 +467,27 @@ int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone)
 
 	memcpy(clone_node, orig_node, sizeof(*clone_node));
 	tm_read_unlock(tm, root);
-	inc_children(tm, clone_node);
+	inc_children(tm, clone_node, fn);
 	tm_write_unlock(tm, *clone);
 
 	return 1;
+}
+
+void value_is_block(struct transaction_manager *tm, uint64_t value, int32_t delta)
+{
+	while (delta < 0) {
+		tm_dec(tm, value);
+		delta++;
+	}
+
+	while (delta > 0) {
+		tm_inc(tm, value);
+		delta--;
+	}
+}
+
+void value_is_meaningless(struct transaction_manager *tm, uint64_t value, int32_t delta)
+{
 }
 
 /*----------------------------------------------------------------*/

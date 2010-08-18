@@ -123,6 +123,7 @@ static int insert_new_block(struct transaction *t, block_t b)
 	return 1;
 }
 
+/* FIXME: rename to is_shadow_block */
 static int is_new_block(struct transaction *t, block_t orig)
 {
 	struct block_list *bl;
@@ -152,7 +153,13 @@ int tm_new_block(struct transaction_manager *tm, block_t *new, void **data)
 int tm_shadow_block(struct transaction_manager *tm, block_t orig,
 		    block_t *copy, void **data, int *inc_children)
 {
-	if (is_new_block(tm->t, orig)) {
+	/*
+	 * If the shadow is shared (ref_count >= 2) then we must create a
+	 * shadow of the shadow.
+	 */
+	/* FIXME: maybe we should just remove blocks from the new_block
+	 * list when their counts go over 1 ? */
+	if (is_new_block(tm->t, orig) && (sm_get_count(tm->sm, orig) < 2)) {
 		*copy = orig;
 		*inc_children = 0;
 		return bm_lock(tm->bm, orig, BM_LOCK_WRITE, data);

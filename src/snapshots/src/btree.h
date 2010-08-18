@@ -45,19 +45,31 @@ btree_lookup_ge(struct transaction_manager *tm, block_t root,
 		uint64_t key, uint64_t *rkey, uint64_t *value);
 
 /*
+ * The btree has no idea what the values stored actually are.  This leads
+ * to problems with reference counts when sharing is occuring.  So we have
+ * to pass in a function to adjust reference counts to many of the btree
+ * functions.  Often the leaves are simply block ids, so here's a standard
+ * function for that case.
+ */
+typedef void (*count_adjust_fn)(struct transaction_manager *tm, uint64_t value, int32_t count_delta);
+void value_is_block(struct transaction_manager *tm, uint64_t value, int32_t delta);
+void value_is_meaningless(struct transaction_manager *tm, uint64_t value, int32_t delta);
+
+/*
  * Insertion (or overwrite an existing value).
  * O(ln(n))
  */
-int btree_insert(struct transaction_manager *tm, block_t root,
+int btree_insert(struct transaction_manager *tm, block_t root, count_adjust_fn fn,
 		 uint64_t key, uint64_t value,
 		 block_t *new_root);
 
 /* Remove a key if present. O(ln(n)) */
-int btree_remove(struct transaction_manager *tm, block_t root,
+int btree_remove(struct transaction_manager *tm, block_t root, count_adjust_fn fn,
 		 uint64_t key, block_t *new_root);
 
 /* Clone a tree. O(1) */
-int btree_clone(struct transaction_manager *tm, block_t root, block_t *clone);
+int btree_clone(struct transaction_manager *tm, block_t root, count_adjust_fn fn,
+		block_t *clone);
 
 /*
  * Hierarchical btrees.  We often have btrees of btrees, these utilities
@@ -76,7 +88,7 @@ int btree_lookup_ge_h(struct transaction_manager *tm, block_t root,
 		      uint64_t *keys, unsigned levels,
 		      uint64_t *key, uint64_t *value);
 
-int btree_insert_h(struct transaction_manager *tm, block_t root,
+int btree_insert_h(struct transaction_manager *tm, block_t root, count_adjust_fn fn,
 		   uint64_t *keys, unsigned levels,
 		   uint64_t value, block_t *new_root);
 
