@@ -31,17 +31,19 @@ struct cache_entry {
 #define MASK (NR_BUCKETS - 1)
 #define PRIME 4294967291
 
-struct space_map {
-	struct transaction_manager *tm;
+struct space_map_combined {
 	block_t nr_blocks;
 	int initialised;
 
+	struct list deltas;
+	struct list buckets[NR_BUCKETS];
+
+	struct transaction_manager *tm;
 	struct btree_info info;
 	block_t root;
 	block_t last_allocated;
 
-	struct list deltas;
-	struct list buckets[NR_BUCKETS];
+	struct disk_format *disk;
 };
 
 /* FIXME: we're hashing blocks elsewhere, factor out the hash fn */
@@ -50,7 +52,7 @@ static unsigned hash_block(block_t b)
 	return (b * PRIME) & MASK;
 }
 
-static struct cache_entry *find_entry(struct space_map *sm, block_t b)
+static struct cache_entry *find_entry(struct space_map_combined *sm, block_t b)
 {
 	struct list *l;
 	list_iterate (l, sm->buckets + hash_block(b)) {
@@ -66,7 +68,7 @@ static struct cache_entry *find_entry(struct space_map *sm, block_t b)
 /*
  * Only call this if you know the entry is _not_ already present.
  */
-static struct cache_entry *add_entry(struct space_map *sm, block_t b, uint32_t ref_count)
+static struct cache_entry *add_entry(struct space_map_combined *sm, block_t b, uint32_t ref_count)
 {
 	struct cache_entry *ce = malloc(sizeof(*ce));
 
@@ -82,7 +84,7 @@ static struct cache_entry *add_entry(struct space_map *sm, block_t b, uint32_t r
 	return ce;
 }
 
-static int add_delta(struct space_map *sm, block_t b, int32_t delta)
+static int add_delta(struct space_map_combined *sm, block_t b, int32_t delta)
 {
 	struct cache_entry *ce = find_entry(sm, b);
 
@@ -125,10 +127,10 @@ static int add_delta(struct space_map *sm, block_t b, int32_t delta)
 	return 1;
 }
 
-static struct space_map *sm_alloc(struct transaction_manager *tm, block_t nr_blocks)
+static struct space_map_combined *sm_alloc(struct transaction_manager *tm, block_t nr_blocks)
 {
 	unsigned i;
-	struct space_map *sm = malloc(sizeof(*sm));
+	struct space_map_combined *sm = malloc(sizeof(*sm));
 
 	if (!sm)
 		return NULL;
@@ -148,27 +150,9 @@ static struct space_map *sm_alloc(struct transaction_manager *tm, block_t nr_blo
 	return sm;
 }
 
-struct space_map *sm_new(struct transaction_manager *tm,
-			 block_t nr_blocks)
+static void destroy(void *context)
 {
-	struct space_map *sm = sm_alloc(tm, nr_blocks);
-	if (sm)
-		sm->initialised = 0;
-
-	return sm;
-}
-
-struct space_map *sm_open(struct transaction_manager *tm,
-			  block_t root, block_t nr_blocks)
-{
-	struct space_map *sm = sm_alloc(tm, nr_blocks);
-	if (sm)
-		sm->root = root;
-	return sm;
-}
-
-void sm_close(struct space_map *sm)
-{
+	struct space_map_combined *sm = (struct space_map_combined *) context;
 	struct list *l, *tmp;
 	list_iterate_safe (l, tmp, &sm->deltas) {
 		struct cache_entry *ce = list_struct_base(l, struct cache_entry, lru);
@@ -178,15 +162,17 @@ void sm_close(struct space_map *sm)
 	free(sm);
 }
 
-static void next_block(struct space_map *sm)
+static void next_block(void *context)
 {
+	struct space_map_combined *sm = (struct space_map_combined *) context;
 	sm->last_allocated++;
 	if (sm->last_allocated == sm->nr_blocks)
 		sm->last_allocated = 0;
 }
 
-int sm_new_block(struct space_map *sm, block_t *b)
+static int new_block(void *context, block_t *b)
 {
+	struct space_map_combined *sm = (struct space_map_combined *) context;
 	block_t i;
 
 	for (i = 0; i < sm->nr_blocks; i++) {
@@ -231,42 +217,49 @@ int sm_new_block(struct space_map *sm, block_t *b)
 	return 0;
 }
 
-int sm_inc_block(struct space_map *sm, block_t b)
+static int inc_block(void *context, block_t b)
 {
+	struct space_map_combined *sm = (struct space_map_combined *) context;
 	return add_delta(sm, b, 1);
 }
 
-int sm_dec_block(struct space_map *sm, block_t b)
+static int dec_block(void *context, block_t b)
 {
+	struct space_map_combined *sm = (struct space_map_combined *) context;
 	return add_delta(sm, b, -1);
 }
 
-uint32_t sm_get_count(struct space_map *sm, block_t b)
+static int get_count(void *context, block_t b, uint32_t *result)
 {
-	uint64_t rc = 0;
+	struct space_map_combined *sm = (struct space_map_combined *) context;
 	struct cache_entry *ce = find_entry(sm, b);
 
-	if (ce)
-		return ce->ref_count + ce->delta;
-	else {
-		if (sm->initialised)
+	if (ce) {
+		*result = ce->ref_count + ce->delta;
+		return 1;
+	} else {
+		if (sm->initialised) {
+			uint64_t rc = 0;
+
 			switch (btree_lookup_equal(&sm->info, sm->root, &b, &rc)) {
 			case LOOKUP_ERROR:
-				abort();
+				return 0;
 
 			case LOOKUP_NOT_FOUND:
-				rc = 0;
-				break;
+				*result = 0;
+				return 1;
 
 			case LOOKUP_FOUND:
-				break;
+				*result = rc;
+				return 1;
 			}
-
-		return rc;
+		}
 	}
+
+	return 0;
 }
 
-static int flush_once(struct space_map *sm, block_t *new_root)
+static int flush_once(struct space_map_combined *sm, block_t *new_root)
 {
 	struct list head, *l, *tmp;
 
@@ -294,8 +287,9 @@ static int flush_once(struct space_map *sm, block_t *new_root)
 	return 1;
 }
 
-int sm_flush(struct space_map *sm, block_t *new_root)
+static int flush(void *context, block_t *new_root)
 {
+	struct space_map_combined *sm = (struct space_map_combined *) context;
 	unsigned i;
 	if (!sm->initialised) {
 		if (!btree_empty(&sm->info, &sm->root))
@@ -322,13 +316,58 @@ int sm_flush(struct space_map *sm, block_t *new_root)
 	return 1;
 }
 
+/*----------------------------------------------------------------*/
+
+static struct space_map_ops combined_ops_ = {
+	.destroy = destroy,
+	.new_block = new_block,
+	.inc_block = inc_block,
+	.dec_block = dec_block,
+	.get_count = get_count,
+	.flush = flush,
+};
+
+struct space_map *sm_new(struct transaction_manager *tm,
+			 block_t nr_blocks)
+{
+	struct space_map *sm;
+	struct space_map_combined *smc = sm_alloc(tm, nr_blocks);
+	if (smc) {
+		smc->initialised = 0;
+		sm = malloc(sizeof(*sm));
+		if (!sm)
+			free(smc);
+		else {
+			sm->ops = &combined_ops_;
+			sm->context = smc;
+		}
+	}
+
+	return sm;
+}
+
+struct space_map *sm_open(struct transaction_manager *tm,
+			  block_t root, block_t nr_blocks)
+{
+	struct space_map *sm = sm_new(tm, nr_blocks);
+	if (sm) {
+		struct space_map_combined *smc = (struct space_map_combined *) sm->context;
+		smc->root = root;
+	}
+
+	return sm;
+}
+
+/*----------------------------------------------------------------*/
+
 static void ignore_leaf(uint64_t leaf, uint32_t *ref_counts)
 {
 }
 
 int sm_walk(struct space_map *sm, uint32_t *ref_counts)
 {
-	return btree_walk(sm->tm, ignore_leaf, &sm->root, 1, ref_counts);
+	struct space_map_combined *smc = (struct space_map_combined *) sm->context;
+	return btree_walk(smc->tm, ignore_leaf, &smc->root, 1, ref_counts);
 }
 
 /*----------------------------------------------------------------*/

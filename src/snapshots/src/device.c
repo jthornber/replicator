@@ -5,7 +5,7 @@
 #include <stdlib.h>
 
 /*----------------------------------------------------------------*/
-
+#if 0
 struct dlist {
 	struct list list;
 	dev_t dev;
@@ -56,5 +56,5 @@ int dev_lookup(struct device_register *dr, dev_t d)
 			return dl->fd;
 	return -1;
 }
-
+#endif
 /*----------------------------------------------------------------*/

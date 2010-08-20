@@ -32,8 +32,54 @@
  * of cycles (possibly not a btree).
  */
 
-struct space_map;
+struct space_map_ops {
+	void (*destroy)(void *context);
+	int (*new_block)(void *context, block_t *b);
+	int (*inc_block)(void *context, block_t b);
+	int (*dec_block)(void *context, block_t b);
+	int (*get_count)(void *context, block_t b, uint32_t *result);
 
+	/*
+	 * Fills out the root of the new on disk space map, so the caller can make
+	 * a note of it in their top level node.
+	 */
+	int (*flush)(void *context, block_t *new_root);
+};
+
+struct space_map {
+	struct space_map_ops *ops;
+	void *context;
+};
+
+/*----------------------------------------------------------------*/
+
+static inline void sm_destroy(struct space_map *sm) {
+	sm->ops->destroy(sm->context);
+}
+
+static inline int sm_new_block(struct space_map *sm, block_t *b) {
+	return sm->ops->new_block(sm->context, b);
+}
+
+static inline int sm_inc_block(struct space_map *sm, block_t b) {
+	return sm->ops->inc_block(sm->context, b);
+}
+
+static inline int sm_dec_block(struct space_map *sm, block_t b) {
+	return sm->ops->dec_block(sm->context, b);
+}
+
+static inline int sm_get_count(struct space_map *sm, block_t b, uint32_t *result) {
+	return sm->ops->get_count(sm->context, b, result);
+}
+
+static inline int sm_flush(struct space_map *sm, block_t *new_root) {
+	return sm->ops->flush(sm->context, new_root);
+}
+
+/*----------------------------------------------------------------*/
+
+/* combined sm specific stuff */
 /* Create a new space smap */
 struct space_map *sm_new(struct transaction_manager *tm,
 			 block_t nr_blocks);
@@ -42,25 +88,12 @@ struct space_map *sm_new(struct transaction_manager *tm,
 /* FIXME: remove the nr_blocks arg */
 struct space_map *sm_open(struct transaction_manager *tm,
 			  block_t root, block_t nr_blocks);
-void sm_close(struct space_map *sm);
-
-int sm_get_root(struct space_map *sm, block_t *root);
 
 /*
  * These can access the disk structures, but only to read the existing
  * layout.  In in core journal notes what reference count deltas have been
  * made.  You must call flush if you want it to hit the disk.
  */
-int sm_new_block(struct space_map *sm, block_t *b);
-int sm_inc_block(struct space_map *sm, block_t b);
-int sm_dec_block(struct space_map *sm, block_t b);
-uint32_t sm_get_count(struct space_map *sm, block_t b);
-
-/*
- * Fills out the root of the new on disk space map, so the caller can make
- * a note of it in their top level node.
- */
-int sm_flush(struct space_map *sm, block_t *new_root);
 
 /*----------------------------------------------------------------*/
 

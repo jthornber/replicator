@@ -75,12 +75,14 @@ void check_reference_counts_(struct transaction_manager *tm,
 	btree_walk(tm, ignore_leaf, roots, count, ref_counts);
 	sm_walk(sm, ref_counts);
 
-	for (b = 0; b < nr_blocks; b++)
-		if (ref_counts[b] != sm_get_count(sm, b)) {
+	for (b = 0; b < nr_blocks; b++) {
+		uint32_t count;
+		if (!sm_get_count(sm, b, &count) || ref_counts[b] != count) {
 			fprintf(stderr, "ref count mismatch for block %u, space map (%u), expected (%u)\n",
-				(unsigned) b, sm_get_count(sm, b), ref_counts[b]);
+				(unsigned) b, sm_get_count(sm, b, &count), ref_counts[b]);
 			abort();
 		}
+	}
 }
 
 void check_reference_counts(struct transaction_manager *tm,
@@ -405,11 +407,13 @@ static void check_leaf_ref_counts(struct transaction_manager *tm)
 	commit(tm, root);
 
 	{
+		uint32_t count;
 		struct space_map *sm = tm_get_sm(tm);
-		assert(sm_get_count(sm, blocks[key]) == 0);
-		assert(sm_get_count(sm, extra_block) == 1);
-		assert(sm_get_count(sm, blocks[key - 1]) == 2);
-		assert(sm_get_count(sm, blocks[key + 1]) == 2);
+
+		assert(sm_get_count(sm, blocks[key], &count) && count == 0);
+		assert(sm_get_count(sm, extra_block, &count) && count == 1);
+		assert(sm_get_count(sm, blocks[key - 1], &count) && count == 2);
+		assert(sm_get_count(sm, blocks[key + 1], &count) && count == 2);
 	}
 }
 

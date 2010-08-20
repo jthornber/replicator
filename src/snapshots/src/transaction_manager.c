@@ -158,8 +158,10 @@ int tm_shadow_block(struct transaction_manager *tm, block_t orig,
 	 * shadow of the shadow.
 	 */
 	/* FIXME: maybe we should just remove blocks from the new_block
-	 * list when their counts go over 1 ? */
-	if (is_new_block(tm->t, orig) && (sm_get_count(tm->sm, orig) < 2)) {
+	 * list when their counts go over 1 ?
+	 */
+	uint32_t count;
+	if (is_new_block(tm->t, orig) && sm_get_count(tm->sm, orig, &count) && (count < 2)) {
 		*copy = orig;
 		*inc_children = 0;
 		return bm_lock(tm->bm, orig, BM_LOCK_WRITE, data);
@@ -190,7 +192,10 @@ int tm_shadow_block(struct transaction_manager *tm, block_t orig,
 		*data = copy_data;
 
 		sm_dec_block(tm->sm, orig);
-		*inc_children = sm_get_count(tm->sm, orig) > 0;
+		if (!sm_get_count(tm->sm, orig, &count))
+			abort();
+
+		*inc_children = count > 0;
 		return 1;
 	}
 }
@@ -220,9 +225,12 @@ void tm_dec(struct transaction_manager *tm, block_t b)
 	sm_dec_block(tm->sm, b);
 }
 
+/* FIXME: change this to return an error code */
 uint32_t tm_ref(struct transaction_manager *tm, block_t b)
 {
-	return sm_get_count(tm->sm, b);
+	uint32_t count;
+	sm_get_count(tm->sm, b, &count);
+	return count;
 }
 
 struct space_map *tm_get_sm(struct transaction_manager *tm)

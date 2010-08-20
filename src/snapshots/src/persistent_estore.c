@@ -527,8 +527,12 @@ int ps_dump_space_map(const char *file, struct exception_store *ps_)
 		block_t i;
 		struct space_map *sm = tm_get_sm(ps->tm);
 
-		for (i = 0; i < nr_blocks; i++)
-			fprintf(fp, "%u\n", sm_get_count(sm, i));
+		uint32_t count;
+		for (i = 0; i < nr_blocks; i++) {
+			if (!sm_get_count(sm, i, &count))
+				abort();
+			fprintf(fp, "%u\n", count);
+		}
 	}
 
 	fclose(fp);
@@ -551,7 +555,10 @@ int ps_diff_space_map(const char *file, struct exception_store *ps_,
 		struct space_map *sm = tm_get_sm(ps->tm);
 
 		for (i = 0; i < nr_blocks; i++) {
-			uint32_t actual_count = sm_get_count(sm, i);
+			uint32_t actual_count;
+			if (!sm_get_count(sm, i, &actual_count))
+				abort();
+
 			if (actual_count != expected_counts[i]) {
 				fprintf(fp, "%u %d\n", (unsigned) i,
 					(int32_t) actual_count - (int32_t) expected_counts[i]);
