@@ -34,14 +34,20 @@
 
 struct space_map_ops {
 	void (*destroy)(void *context);
+
+	/*
+	 * These should not write to disk, just jot down the changes in
+	 * ram.
+	 */
 	int (*new_block)(void *context, block_t *b);
 	int (*inc_block)(void *context, block_t b);
 	int (*dec_block)(void *context, block_t b);
 	int (*get_count)(void *context, block_t b, uint32_t *result);
 
 	/*
-	 * Fills out the root of the new on disk space map, so the caller can make
-	 * a note of it in their top level node.
+	 * Flushes all changes to disk.  Fills out the root of the new on
+	 * disk space map, so the caller can make a note of it in their top
+	 * level node.
 	 */
 	int (*flush)(void *context, block_t *new_root);
 };
