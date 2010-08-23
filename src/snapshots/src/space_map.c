@@ -79,22 +79,23 @@ static int io_lookup(struct disk_io *io, block_t b, uint32_t *result)
 }
 
 /* FIXME: differentiate between not found and errors */
-static int io_find_unused(struct disk_io *io, block_t begin, block_t end, block_t *result)
+static enum lookup_result
+io_find_unused(struct disk_io *io, block_t begin, block_t end, block_t *result)
 {
 	block_t b;
 	uint32_t ref_count;
 
 	for (b = begin; b != end; b++) {
 		if (!io_lookup(io, b, &ref_count))
-			return 0;
+			return LOOKUP_ERROR;
 
 		if (ref_count == 0) {
 			*result = b;
-			return 1;
+			return LOOKUP_FOUND;
 		}
 	}
 
-	return 0;
+	return LOOKUP_NOT_FOUND;
 }
 
 static void io_begin(struct disk_io *io)
@@ -268,39 +269,67 @@ static int new_block_uninitialised(struct space_map_combined *sm, block_t *found
 	return 0;
 }
 
-static int new_block_initialised_range(struct space_map_combined *sm,
-				       block_t begin, block_t end,
-				       block_t *found)
+static enum lookup_result
+new_block_initialised_range(struct space_map_combined *sm,
+			    block_t begin, block_t end,
+			    block_t *found)
 {
 	struct cache_entry *ce;
 
 	while (begin < end) {
-		if (!io_find_unused(&sm->io, begin, end, found))
+		switch (io_find_unused(&sm->io, begin, end, found)) {
+		case LOOKUP_ERROR:
+			return LOOKUP_ERROR;
+
+		case LOOKUP_NOT_FOUND:
 			return 0;
+
+		default:
+			break;
+		}
 
 		ce = find_entry(sm, *found);
 		if (!ce) {
 			if (!new_entry(sm, *found))
 				return 0;
 			sm->last_allocated = *found;
-			return 1;
+			return LOOKUP_FOUND;
 
 		} else if (ce->ref_count + ce->delta == 0) {
 			inc_entry(sm, ce);
 			sm->last_allocated = *found;
-			return 1;
+			return LOOKUP_FOUND;
 		}
 
 		begin = *found + 1;
 	}
 
-	return 0;
+	return LOOKUP_NOT_FOUND;
 }
 
 static int new_block_initialised(struct space_map_combined *sm, block_t *b)
 {
-	return (new_block_initialised_range(sm, sm->last_allocated + 1, sm->nr_blocks, b) ||
-		new_block_initialised_range(sm, 0, sm->last_allocated + 1, b));
+	switch (new_block_initialised_range(sm, sm->last_allocated + 1, sm->nr_blocks, b)) {
+	case LOOKUP_ERROR:
+		return 0;
+
+	case LOOKUP_NOT_FOUND:
+		break;
+
+	case LOOKUP_FOUND:
+		return 1;
+	}
+
+	switch (new_block_initialised_range(sm, 0, sm->last_allocated + 1, b)) {
+	case LOOKUP_ERROR:
+	case LOOKUP_NOT_FOUND:
+		return 0;
+
+	case LOOKUP_FOUND:
+		return 1;
+	}
+
+	return 0;
 }
 
 static int new_block(void *context, block_t *b)
