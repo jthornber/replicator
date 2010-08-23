@@ -78,6 +78,24 @@ static int io_lookup(struct disk_io *io, block_t b, uint32_t *result)
 	return 1;
 }
 
+/* FIXME: differentiate between not found and errors */
+static int io_find_unused(struct disk_io *io, block_t begin, block_t end, block_t *result)
+{
+	block_t b;
+	uint32_t ref_count;
+
+	for (b = begin; b != end; b++) {
+		if (!io_lookup(io, b, &ref_count))
+			return 0;
+
+		if (ref_count == 0) {
+			*result = b;
+			return 1;
+		}
+	}
+
+	return 0;
+}
 
 static void io_begin(struct disk_io *io)
 {
@@ -206,49 +224,89 @@ static void destroy(void *context)
 	free(sm);
 }
 
-static void next_block(void *context)
+static void inc_entry(struct space_map_combined *sm, struct cache_entry *ce)
 {
-	struct space_map_combined *sm = (struct space_map_combined *) context;
-	sm->last_allocated++;
-	if (sm->last_allocated == sm->nr_blocks)
-		sm->last_allocated = 0;
+	list_move(&sm->deltas, &ce->lru);
+	ce->delta++;
+	ce->unwritten++;
 }
 
-static int new_block(void *context, block_t *b)
+static int new_entry(struct space_map_combined *sm, block_t b)
 {
-	struct space_map_combined *sm = (struct space_map_combined *) context;
-	block_t i;
+	struct cache_entry *ce = add_entry(sm, b, 0);
+	if (!ce)
+		return 0;
 
+	inc_entry(sm, ce);
+	return 1;
+}
+
+static int new_block_uninitialised(struct space_map_combined *sm, block_t *found)
+{
+	block_t i, b;
 	for (i = 0; i < sm->nr_blocks; i++) {
 		struct cache_entry *ce;
+		b = (sm->last_allocated + i) % sm->nr_blocks;
 
-		next_block(sm);
-
-		ce = find_entry(sm, sm->last_allocated);
+		ce = find_entry(sm, b);
 
 		if (!ce) {
-			uint32_t ref_count = 0;
-			if (sm->initialised) {
-				if (!io_lookup(&sm->io, sm->last_allocated, &ref_count))
-					return 0;
-			}
+			if (!new_entry(sm, b))
+				return 0;
 
-			if (ref_count > 0)
-				continue;
-
-			ce = add_entry(sm, sm->last_allocated, 0);
+			*found = sm->last_allocated = b;
+			return 1;
 		}
 
 		if (ce->ref_count + ce->delta == 0) {
-			list_move(&sm->deltas, &ce->lru);
-			ce->delta++;
-			ce->unwritten++;
-			*b = sm->last_allocated;
+			inc_entry(sm, ce);
+			*found = sm->last_allocated = b;
 			return 1;
 		}
 	}
 
 	return 0;
+}
+
+static int new_block_initialised_range(struct space_map_combined *sm,
+				       block_t begin, block_t end,
+				       block_t *found)
+{
+	struct cache_entry *ce;
+
+	while (begin < end) {
+		if (!io_find_unused(&sm->io, begin, end, found))
+			return 0;
+
+		ce = find_entry(sm, *found);
+		if (!ce) {
+			if (!new_entry(sm, *found))
+				return 0;
+			sm->last_allocated = *found;
+			return 1;
+
+		} else if (ce->ref_count + ce->delta == 0) {
+			inc_entry(sm, ce);
+			sm->last_allocated = *found;
+			return 1;
+		}
+
+		begin = *found + 1;
+	}
+
+	return 0;
+}
+
+static int new_block_initialised(struct space_map_combined *sm, block_t *b)
+{
+	return (new_block_initialised_range(sm, sm->last_allocated + 1, sm->nr_blocks, b) ||
+		new_block_initialised_range(sm, 0, sm->last_allocated + 1, b));
+}
+
+static int new_block(void *context, block_t *b)
+{
+	struct space_map_combined *sm = (struct space_map_combined *) context;
+	return sm->initialised ? new_block_initialised(sm, b) : new_block_uninitialised(sm, b);
 }
 
 static int inc_block(void *context, block_t b)
