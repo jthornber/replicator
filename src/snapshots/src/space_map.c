@@ -16,6 +16,13 @@
 
 /*----------------------------------------------------------------*/
 
+struct disk_io {
+	struct transaction_manager *tm;
+	struct btree_info info;
+	block_t root;
+	block_t new_root;
+};
+
 /* we have a little hash table of the reference count changes */
 struct cache_entry {
 	struct list lru;
@@ -38,13 +45,59 @@ struct space_map_combined {
 	struct list deltas;
 	struct list buckets[NR_BUCKETS];
 
-	struct transaction_manager *tm;
-	struct btree_info info;
-	block_t root;
+	struct disk_io io;
 	block_t last_allocated;
 
 	struct disk_format *disk;
 };
+
+/*----------------------------------------------------------------*/
+
+/* on disk format */
+static int io_init(struct disk_io *io)
+{
+	return btree_empty(&io->info, &io->root);
+}
+
+static int io_lookup(struct disk_io *io, block_t b, uint32_t *result)
+{
+	uint64_t ref_count;
+	switch (btree_lookup_equal(&io->info, io->root, &b, &ref_count)) {
+	case LOOKUP_ERROR:
+		return 0;
+
+	case LOOKUP_NOT_FOUND:
+		*result = 0;
+		break;
+
+	case LOOKUP_FOUND:
+		*result = ref_count;
+		break;
+	}
+
+	return 1;
+}
+
+
+static void io_begin(struct disk_io *io)
+{
+	io->new_root = io->root;
+}
+
+static int io_insert(struct disk_io *io, block_t b, uint32_t ref_count)
+{
+	return btree_insert(&io->info, io->new_root,
+			    &b, ref_count, &io->new_root);
+}
+
+static void io_commit(struct disk_io *io)
+{
+	io->root = io->new_root;
+}
+
+/*----------------------------------------------------------------*/
+
+/* in core hash */
 
 /* FIXME: we're hashing blocks elsewhere, factor out the hash fn */
 static unsigned hash_block(block_t b)
@@ -89,19 +142,10 @@ static int add_delta(struct space_map_combined *sm, block_t b, int32_t delta)
 	struct cache_entry *ce = find_entry(sm, b);
 
 	if (!ce) {
-		uint64_t ref_count = 0;
+		uint32_t ref_count = 0;
 		if (sm->initialised) {
-			switch (btree_lookup_equal(&sm->info, sm->root, &b, &ref_count)) {
-			case LOOKUP_ERROR:
+			if (!io_lookup(&sm->io, b, &ref_count))
 				return 0;
-
-			case LOOKUP_NOT_FOUND:
-				ref_count = 0;
-				break;
-
-			case LOOKUP_FOUND:
-				break;
-			}
 		}
 
 		ce = add_entry(sm, b, ref_count);
@@ -135,12 +179,12 @@ static struct space_map_combined *sm_alloc(struct transaction_manager *tm, block
 	if (!sm)
 		return NULL;
 
-	sm->tm = tm;
+	sm->io.tm = tm;
 	sm->nr_blocks = nr_blocks;
 	sm->initialised = 1;
-	sm->info.tm = tm;
-	sm->info.levels = 1;
-	sm->info.adjust = value_is_meaningless;
+	sm->io.info.tm = tm;
+	sm->io.info.levels = 1;
+	sm->io.info.adjust = value_is_meaningless;
 	sm->last_allocated = 0;
 
 	list_init(&sm->deltas);
@@ -183,20 +227,10 @@ static int new_block(void *context, block_t *b)
 		ce = find_entry(sm, sm->last_allocated);
 
 		if (!ce) {
-			uint64_t ref_count = 0;
+			uint32_t ref_count = 0;
 			if (sm->initialised) {
-				switch (btree_lookup_equal(&sm->info, sm->root,
-							   &sm->last_allocated, &ref_count)) {
-				case LOOKUP_ERROR:
+				if (!io_lookup(&sm->io, sm->last_allocated, &ref_count))
 					return 0;
-
-				case LOOKUP_NOT_FOUND:
-					ref_count = 0;
-					break;
-
-				case LOOKUP_FOUND:
-					break;
-				}
 			}
 
 			if (ref_count > 0)
@@ -238,28 +272,18 @@ static int get_count(void *context, block_t b, uint32_t *result)
 		*result = ce->ref_count + ce->delta;
 		return 1;
 	} else {
-		if (sm->initialised) {
-			uint64_t rc = 0;
-
-			switch (btree_lookup_equal(&sm->info, sm->root, &b, &rc)) {
-			case LOOKUP_ERROR:
-				return 0;
-
-			case LOOKUP_NOT_FOUND:
-				*result = 0;
-				return 1;
-
-			case LOOKUP_FOUND:
-				*result = rc;
-				return 1;
-			}
+		if (sm->initialised)
+			return io_lookup(&sm->io, b, result);
+		else {
+			*result = 0;
+			return 1;
 		}
 	}
 
 	return 0;
 }
 
-static int flush_once(struct space_map_combined *sm, block_t *new_root)
+static int flush_once(struct space_map_combined *sm)
 {
 	struct list head, *l, *tmp;
 
@@ -272,14 +296,13 @@ static int flush_once(struct space_map_combined *sm, block_t *new_root)
 		uint32_t shadow = ce->unwritten;
 
 		assert(ce->unwritten);
-		if (!btree_insert(&sm->info, *new_root,
-				  &ce->block, ce->ref_count + shadow, new_root))
+		if (!io_insert(&sm->io, ce->block, ce->ref_count + shadow))
 			abort();
 
 		/*
 		 * The |unwritten| value may have increased as a result of
-		 * the btree insert above.  So we subtract |shadow|,
-		 * rather than setting to 0.
+		 * the insert above.  So we subtract |shadow|, rather than
+		 * setting to 0.
 		 */
 		ce->unwritten -= shadow;
 	}
@@ -291,14 +314,13 @@ static int flush(void *context, block_t *new_root)
 {
 	struct space_map_combined *sm = (struct space_map_combined *) context;
 	unsigned i;
-	if (!sm->initialised) {
-		if (!btree_empty(&sm->info, &sm->root))
+	if (!sm->initialised)
+		if (!io_init(&sm->io))
 			return 0;
-	}
 
-	*new_root = sm->root;
+	io_begin(&sm->io);
 	while (!list_empty(&sm->deltas))
-		if (!flush_once(sm, new_root))
+		if (!flush_once(sm))
 			return 0;
 
 	/* wipe the cache completely */
@@ -310,8 +332,7 @@ static int flush(void *context, block_t *new_root)
 		}
 		list_init(sm->buckets + i);
 	}
-
-	sm->root = *new_root;
+	io_commit(&sm->io);
 	sm->initialised = 1;
 	return 1;
 }
@@ -352,7 +373,7 @@ struct space_map *sm_open(struct transaction_manager *tm,
 	struct space_map *sm = sm_new(tm, nr_blocks);
 	if (sm) {
 		struct space_map_combined *smc = (struct space_map_combined *) sm->context;
-		smc->root = root;
+		smc->io.root = root;
 	}
 
 	return sm;
@@ -367,7 +388,7 @@ static void ignore_leaf(uint64_t leaf, uint32_t *ref_counts)
 int sm_walk(struct space_map *sm, uint32_t *ref_counts)
 {
 	struct space_map_combined *smc = (struct space_map_combined *) sm->context;
-	return btree_walk(smc->tm, ignore_leaf, &smc->root, 1, ref_counts);
+	return btree_walk(smc->io.tm, ignore_leaf, &smc->io.root, 1, ref_counts);
 }
 
 /*----------------------------------------------------------------*/
