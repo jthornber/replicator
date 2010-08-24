@@ -9,8 +9,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define NR_BLOCKS 102400
-#define ORIGIN_SIZE (NR_BLOCKS / 10)
+#define NR_BLOCKS 10240
+#define ORIGIN_SIZE (NR_BLOCKS / 4)
 
 struct device_ops {
 	void (*destroy)(void *context);
@@ -258,7 +258,7 @@ static void linear_origin_write(struct block_manager *bm, struct exception_store
 
 		dev_write_block(origin, i, buffer);
 
-		if (i % 100) {
+		if ((i % 100) == 0) {
 			estore_commit(es);
 			bm_io_mark(bm, "commit");
 			estore_begin(es);
@@ -291,7 +291,7 @@ void random_origin_write(struct block_manager *bm, struct exception_store *es)
 
 		dev_write_block(origin, rand_int(ORIGIN_SIZE), buffer);
 
-		if (i % 100) {
+		if ((i % 100) == 0) {
 			estore_commit(es);
 			bm_io_mark(bm, "commit");
 			estore_begin(es);
@@ -324,7 +324,7 @@ void linear_snapshot_write(struct block_manager *bm, struct exception_store *es)
 
 		dev_write_block(snapshot, i, buffer);
 
-		if (i % 100) {
+		if ((i % 100) == 0) {
 			estore_commit(es);
 			bm_io_mark(bm, "commit");
 			estore_begin(es);
@@ -357,7 +357,7 @@ void random_snapshot_write(struct block_manager *bm, struct exception_store *es)
 
 		dev_write_block(snapshot, rand_int(ORIGIN_SIZE), buffer);
 
-		if (i % 100) {
+		if ((i % 100) == 0) {
 			estore_commit(es);
 			bm_io_mark(bm, "commit");
 			estore_begin(es);
