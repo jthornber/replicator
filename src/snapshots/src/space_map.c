@@ -6,13 +6,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* FIXME: Look at Mikulas' radix trees, is this applicable to reference counts? */
-
-/* FIXME: at the very least store ranges in the btree.  Value can have
- * 32bit reference count + 32 bit range.  Nope range implied by the keys.
- * Have to be 64bit for reference count :(
- */
+#include <stdio.h>
 
 /*----------------------------------------------------------------*/
 
@@ -21,6 +15,8 @@ struct disk_io {
 	struct btree_info info;
 	block_t root;
 	block_t new_root;
+
+	struct list bitmap_list;
 };
 
 /* we have a little hash table of the reference count changes */
@@ -47,21 +43,270 @@ struct sm {
 
 	struct disk_io io;
 	block_t last_allocated;
-
-	struct disk_format *disk;
 };
 
 /*----------------------------------------------------------------*/
 
-/* on disk format */
+/*
+ * On disk format
+ *
+ * We hold 2 bits per block, which represent UNUSED, REF_COUNT = 1,
+ * REF_COUNT = 2 and REF_COUNT = many.  A separate btree holds ref counts
+ * for blocks that are over 2.
+ */
+
+struct bitmap_header {
+	uint32_t nr_entries;
+	uint32_t nr_free;
+	uint32_t maybe_first_free;
+	uint32_t padding;
+};
+
+#define MAX_BIT_CHARS (BLOCK_SIZE - sizeof(struct bitmap_header))
+#define MAX_BIT_ENTRIES (MAX_BIT_CHARS * 4)
+
+struct bitmap {
+	struct bitmap_header header;
+	unsigned char bits[MAX_BIT_CHARS];
+};
+
+struct bitmap_list {
+	struct list list;
+	block_t b;
+	block_t nb;
+};
+
+static int new_bitmaps(struct transaction_manager *tm, struct list *head, block_t nr_blocks)
+{
+	uint32_t nr_bitmaps = nr_blocks / MAX_BIT_ENTRIES;
+	block_t b, i;
+	struct bitmap *bm;
+	struct bitmap_list *bl;
+	int extra = 0;
+
+	assert(sizeof(*bm) == BLOCK_SIZE);
+
+	if (nr_bitmaps * MAX_BIT_ENTRIES != nr_blocks) {
+		extra = 1;
+		nr_bitmaps++;
+	}
+
+	for (i = 0; i < nr_bitmaps; i++) {
+		if (!tm_new_block(tm, &b, (void **) &bm))
+			abort();
+
+		memset(bm, 0, BLOCK_SIZE);
+		bm->header.nr_entries = (extra && i == nr_bitmaps - 1) ? (nr_blocks % MAX_BIT_ENTRIES) : MAX_BIT_ENTRIES;
+		bm->header.nr_free = bm->header.nr_entries;
+		bm->header.maybe_first_free = 0;
+		bm->header.padding = 0;
+
+		bl = malloc(sizeof(*bl));
+		if (!bl)
+			abort();
+
+		list_add(head, &bl->list);
+		bl->b = b;
+
+		tm_write_unlock(tm, b);
+	}
+
+	return 1;
+}
+
+static uint32_t lookup_bitmap_(struct bitmap *bm, block_t b)
+{
+	unsigned char byte = bm->bits[b / 4];
+	return (byte >> ((b % 4) * 2)) & 0x3;
+}
+
+static void set_bitmap_(struct bitmap *bm, block_t b, uint32_t val)
+{
+	unsigned c = b / 4;
+	unsigned shift = (b % 4) * 2;
+	unsigned mask = ~(3 << shift);
+
+	assert(val <= 3);
+	/* zero the value */
+	bm->bits[c] &= mask;
+
+	/* then or in the new value */
+	bm->bits[b / 4] |= val << shift;
+}
+
+static int lookup_bitmap(struct transaction_manager *tm, struct list *head, block_t b, uint32_t *count)
+{
+	struct bitmap_list *bl;
+	struct bitmap *bm;
+
+	list_iterate_items (bl, head) {
+		if (!tm_read_lock(tm, bl->b, (void **) &bm))
+			abort();
+
+		if (b < bm->header.nr_entries) {
+			*count = lookup_bitmap_(bm, b);
+			tm_read_unlock(tm, bl->b);
+			return 1;
+		}
+
+		b -= bm->header.nr_entries;
+		tm_read_unlock(tm, bl->b);
+	}
+
+	return 0;
+}
+
+static inline block_t min_block(block_t b1, block_t b2)
+{
+	return (b1 <= b2) ? b1 : b2;
+}
+
+static inline block_t max_block(block_t b1, block_t b2)
+{
+	return (b1 >= b2) ? b1 : b2;
+}
+
+static int find_free_bitmap(struct transaction_manager *tm, struct list *head,
+			    block_t begin, block_t end,
+			    block_t *b)
+{
+	struct bitmap *bm;
+	struct bitmap_list *bl;
+
+	*b = 0;
+	list_iterate_items (bl, head) {
+		if (!tm_read_lock(tm, bl->b, (void **) &bm))
+			abort();
+
+		if (bm->header.nr_free > 0) {
+			unsigned i;
+
+			for (i = max_block(bm->header.maybe_first_free, begin);
+			     i < bm->header.nr_entries;
+			     i++) {
+				if (lookup_bitmap_(bm, i) == 0) {
+					*b += i;
+					tm_read_unlock(tm, bl->b);
+					return 1;
+				}
+			}
+		}
+		*b += bm->header.nr_entries;
+		begin = (begin > bm->header.nr_entries) ? begin - bm->header.nr_entries : 0;
+
+		tm_read_unlock(tm, bl->b);
+	}
+
+	return 0;
+}
+
+static int set_bitmap(struct transaction_manager *tm, struct list *head, block_t b, uint32_t value)
+{
+	struct bitmap *bm;
+	struct bitmap_list *bl;
+
+	if (value > 3)
+		abort();
+
+	list_iterate_items (bl, head) {
+		if (!tm_read_lock(tm, bl->nb, (void **) &bm))
+			abort();
+
+		if (b > bm->header.nr_entries) {
+			b -= bm->header.nr_entries;
+			tm_read_unlock(tm, bl->nb);
+		} else {
+			int inc;
+			uint32_t old;
+
+			/* FIXME: there's a race here, but no point fixing it
+			 * until we stop using a list for the index
+			 */
+			tm_read_unlock(tm, bl->nb);
+
+			if (!tm_shadow_block(tm, bl->nb, &bl->nb, (void **) &bm, &inc))
+				abort();
+
+			old = lookup_bitmap_(bm, b);
+			set_bitmap_(bm, b, value);
+
+			if (value && !old) {
+				bm->header.nr_free--;
+				if (bm->header.maybe_first_free == b)
+					bm->header.maybe_first_free = b + 1;
+
+			} else if (old && !value) {
+				bm->header.nr_free++;
+				bm->header.maybe_first_free = min_block(bm->header.maybe_first_free, b);
+			}
+			tm_write_unlock(tm, bl->nb);
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+static void bitmap_begin(struct list *head)
+{
+	struct bitmap_list *bl;
+
+	list_iterate_items (bl, head)
+		bl->nb = bl->b;
+}
+
+static void bitmap_commit(struct list *head)
+{
+	struct bitmap_list *bl;
+
+	list_iterate_items (bl, head)
+		bl->b = bl->nb;
+}
+
+static int bitmap_walk(struct transaction_manager *tm,
+		       struct list *head,
+		       uint32_t *ref_counts)
+{
+	struct bitmap_list *bl;
+
+	list_iterate_items (bl, head) {
+		ref_counts[bl->b]++;
+#if 0
+		if (!tm_read_lock(tm, bl->b, (void **) &bm))
+			abort();
+		for (i = 0; i < bm->header.nr_entries; i++) {
+			uint32_t rc = lookup_bitmap_(bm, i);
+			if (rc < 2)
+				ref_counts[b + i] += rc;
+		}
+
+		if (!tm_read_unlock(tm, bl->b))
+			abort();
+#endif
+	}
+
+	return 1;
+}
+
+/*--------------------------------*/
+
 static int io_init(struct disk_io *io)
 {
-	return btree_empty(&io->info, &io->root);
+	list_init(&io->bitmap_list);
+	return new_bitmaps(io->tm, &io->bitmap_list, bm_nr_blocks(tm_get_bm(io->tm))) &&
+		btree_empty(&io->info, &io->root);
 }
 
 static int io_lookup(struct disk_io *io, block_t b, uint32_t *result)
 {
 	uint64_t ref_count;
+
+	if (!lookup_bitmap(io->tm, &io->bitmap_list, b, result))
+		abort();
+
+	if (*result <= 3)
+		return 1;
+
 	switch (btree_lookup_equal(&io->info, io->root, &b, &ref_count)) {
 	case LOOKUP_ERROR:
 		return 0;
@@ -78,40 +323,41 @@ static int io_lookup(struct disk_io *io, block_t b, uint32_t *result)
 	return 1;
 }
 
-/* FIXME: differentiate between not found and errors */
 static enum lookup_result
 io_find_unused(struct disk_io *io, block_t begin, block_t end, block_t *result)
 {
-	block_t b;
-	uint32_t ref_count;
+	if (!find_free_bitmap(io->tm, &io->bitmap_list, begin, end, result))
+		return LOOKUP_NOT_FOUND;
 
-	for (b = begin; b != end; b++) {
-		if (!io_lookup(io, b, &ref_count))
-			return LOOKUP_ERROR;
-
-		if (ref_count == 0) {
-			*result = b;
-			return LOOKUP_FOUND;
-		}
-	}
-
-	return LOOKUP_NOT_FOUND;
+	return LOOKUP_FOUND;
 }
 
 static void io_begin(struct disk_io *io)
 {
 	io->new_root = io->root;
+	bitmap_begin(&io->bitmap_list);
 }
 
 static int io_insert(struct disk_io *io, block_t b, uint32_t ref_count)
 {
-	return btree_insert(&io->info, io->new_root,
-			    &b, ref_count, &io->new_root);
+	if (ref_count <= 2) {
+		if (!set_bitmap(io->tm, &io->bitmap_list, b, ref_count))
+			abort();
+	} else {
+		if (!set_bitmap(io->tm, &io->bitmap_list, b, 3))
+			abort();
+
+		return btree_insert(&io->info, io->new_root,
+				    &b, ref_count, &io->new_root);
+	}
+
+	return 1;
 }
 
 static void io_commit(struct disk_io *io)
 {
 	io->root = io->new_root;
+	bitmap_commit(&io->bitmap_list);
 }
 
 /*----------------------------------------------------------------*/
@@ -407,9 +653,10 @@ static int flush(void *context, block_t *new_root)
 			return 0;
 
 	io_begin(&sm->io);
-	while (!list_empty(&sm->deltas))
+	while (!list_empty(&sm->deltas)) {
 		if (!flush_once(sm))
 			return 0;
+	}
 
 	/* wipe the cache completely */
 	for (i = 0; i < NR_BUCKETS; i++) {
@@ -476,7 +723,7 @@ static void ignore_leaf(uint64_t leaf, uint32_t *ref_counts)
 int sm_walk(struct space_map *sm, uint32_t *ref_counts)
 {
 	struct sm *smc = (struct sm *) sm->context;
-	return btree_walk(smc->io.tm, ignore_leaf, &smc->io.root, 1, ref_counts);
+	return btree_walk(smc->io.tm, ignore_leaf, &smc->io.root, 1, ref_counts) && bitmap_walk(smc->io.tm, &smc->io.bitmap_list, ref_counts);
 }
 
 /*----------------------------------------------------------------*/
