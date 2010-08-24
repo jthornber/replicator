@@ -13,7 +13,7 @@
 #include <unistd.h>
 
 #define BLOCK_SIZE 4096
-#define NR_BLOCKS 102400
+#define NR_BLOCKS 10240
 
 static struct pool *mem_;
 static struct list randoms_;
@@ -79,7 +79,7 @@ void check_reference_counts_(struct transaction_manager *tm,
 		uint32_t count;
 		if (!sm_get_count(sm, b, &count) || ref_counts[b] != count) {
 			fprintf(stderr, "ref count mismatch for block %u, space map (%u), expected (%u)\n",
-				(unsigned) b, sm_get_count(sm, b, &count), ref_counts[b]);
+				(unsigned) b, count, ref_counts[b]);
 			abort();
 		}
 	}
@@ -417,6 +417,140 @@ static void check_leaf_ref_counts(struct transaction_manager *tm)
 	}
 }
 
+static void check_delete(struct transaction_manager *tm)
+{
+	struct number_list *nl;
+	block_t root = 0;
+	struct btree_info info;
+
+	info.tm = tm;
+	info.levels = 1;
+	info.adjust = value_is_meaningless;
+
+	tm_begin(tm);
+	if (!btree_empty(&info, &root))
+		abort();
+
+	list_iterate_items (nl, &randoms_)
+		if (!btree_insert(&info, root, &nl->key, nl->value, &root))
+			barf("insert");
+
+	btree_del(&info, root);
+
+	commit(tm, root);
+	check_locks(tm);
+
+	check_reference_counts(tm, NULL, 0);
+}
+
+static void check_delete_sep_trans(struct transaction_manager *tm)
+{
+	struct number_list *nl;
+	block_t root = 0;
+	struct btree_info info;
+
+	info.tm = tm;
+	info.levels = 1;
+	info.adjust = value_is_meaningless;
+
+	tm_begin(tm);
+	if (!btree_empty(&info, &root))
+		abort();
+
+	list_iterate_items (nl, &randoms_)
+		if (!btree_insert(&info, root, &nl->key, nl->value, &root))
+			barf("insert");
+
+	commit(tm, root);
+	check_locks(tm);
+
+	tm_begin(tm);
+	btree_del(&info, root);
+	commit(tm, root);
+	check_locks(tm);
+
+	check_reference_counts(tm, NULL, 0);
+}
+
+static void check_delete_h(struct transaction_manager *tm)
+{
+	typedef uint64_t table_entry[5];
+	static table_entry table[] = {
+		{ 1, 1, 1, 1, 100 },
+		{ 1, 1, 1, 2, 101 },
+		{ 1, 1, 1, 3, 102 },
+
+		{ 1, 1, 2, 1, 200 },
+		{ 1, 1, 2, 2, 201 },
+		{ 1, 1, 2, 3, 202 },
+
+		{ 2, 1, 1, 1, 301 },
+		{ 2, 1, 1, 2, 302 },
+		{ 2, 1, 1, 3, 303 }
+	};
+
+	block_t root = 0;
+	int i;
+	struct btree_info info;
+
+	info.tm = tm;
+	info.levels = 4;
+	info.adjust = value_is_meaningless;
+
+	tm_begin(tm);
+	if (!btree_empty(&info, &root))
+		abort();
+
+	for (i = 0; i < sizeof(table) / sizeof(*table); i++) {
+		if (!btree_insert(&info, root, table[i], table[i][4], &root))
+			barf("insert");
+	}
+	btree_del(&info, root);
+
+	commit(tm, root);
+	check_locks(tm);
+
+	check_reference_counts(tm, NULL, 0);
+}
+
+static void check_delete_clone(struct transaction_manager *tm)
+{
+	struct number_list *nl;
+	block_t root = 0, clone;
+	struct btree_info info;
+	unsigned i;
+
+	info.tm = tm;
+	info.levels = 1;
+	info.adjust = value_is_meaningless;
+
+	tm_begin(tm);
+	if (!btree_empty(&info, &root))
+		abort();
+
+	list_iterate_items (nl, &randoms_)
+		if (!btree_insert(&info, root, &nl->key, nl->value, &root))
+			barf("insert");
+
+	btree_clone(&info, root, &clone);
+
+	/* overwrite some values so the two trees diverge nicely */
+	i = 0;
+	list_iterate_items (nl, &randoms_) {
+		if (!btree_insert(&info, clone, &nl->key, 0, &clone))
+			abort();
+		if (++i > 1000)
+			break;
+	}
+
+	btree_del(&info, clone);
+
+	commit(tm, root);
+	check_locks(tm);
+
+	check_reference_counts(tm, &root, 1);
+}
+
 static int open_file()
 {
 	int i;
@@ -450,7 +584,11 @@ int main(int argc, char **argv)
 		{ "check_multiple_commits_contiguous", check_multiple_commits_contiguous },
 		{ "check_clone", check_clone },
 		{ "check_insert_h", check_insert_h },
-		{ "check leaf ref counts", check_leaf_ref_counts }
+		{ "check leaf ref counts", check_leaf_ref_counts },
+		{ "check delete", check_delete },
+		{ "check delete in a separate transaction", check_delete_sep_trans },
+		{ "check delete of a hierarchical btree", check_delete_h },
+		{ "check delete of a clone", check_delete_clone }
 	};
 
 	int i;

@@ -180,6 +180,7 @@ static int add_delta(struct sm *sm, block_t b, int32_t delta)
 	else {
 		/* deltas have cancelled each other out */
 		list_del(&ce->lru);
+		list_init(&ce->lru);
 	}
 
 #if 1

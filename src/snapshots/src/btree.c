@@ -104,6 +104,52 @@ int btree_empty(struct btree_info *info, block_t *root)
 	return 1;
 }
 
+/*
+ * A simple recursive implementation of tree deletion, we'll need to use an
+ * iterative walk before we move this into the kernel.
+ */
+int btree_del_(struct btree_info *info, block_t root, unsigned level)
+{
+	struct node *n;
+	uint32_t ref_count = tm_ref(info->tm, root);
+
+	if (ref_count == 1) {
+		unsigned i;
+
+		/*
+		 * We know this node isn't shared, so we can get away with
+		 * just a read lock.
+		 */
+		if (!tm_read_lock(info->tm, root, (void **) &n))
+			abort();
+
+		if (n->header.flags & INTERNAL_NODE) {
+			for (i = 0; i < n->header.nr_entries; i++)
+				if (!btree_del_(info, n->values[i], level))
+					return 0;
+
+		} else if (level < (info->levels - 1)) {
+			for (i = 0; i < n->header.nr_entries; i++)
+				if (!btree_del_(info, n->values[i], level + 1))
+					return 0;
+
+		} else
+			for (i = 0; i < n->header.nr_entries; i++)
+				info->adjust(info->tm, n->values[i], -1);
+
+		if (!tm_read_unlock(info->tm, root))
+			abort();
+	}
+
+	tm_dec(info->tm, root);
+	return 1;
+}
+
+int btree_del(struct btree_info *info, block_t root)
+{
+	return btree_del_(info, root, 0);
+}
+
 static enum lookup_result
 btree_lookup_raw(struct btree_info *info, block_t root,
 		 uint64_t key, int (*search_fn)(struct node *, uint64_t),
@@ -153,7 +199,7 @@ btree_lookup_equal(struct btree_info *info,
 	for (level = 0; level < info->levels; level++) {
 		r = btree_lookup_raw(info, root, keys[level], lower_bound, &rkey, value, &leaf);
 
-		if (old_leaf)
+		if (level)
 			tm_read_unlock(info->tm, old_leaf);
 
 		if (r == LOOKUP_FOUND) {
@@ -184,7 +230,7 @@ btree_lookup_le(struct btree_info *info,
 	for (level = 0; level < info->levels; level++) {
 		r = btree_lookup_raw(info, root, keys[level], lower_bound, key, value, &leaf);
 
-		if (old_leaf)
+		if (level)
 			tm_read_unlock(info->tm, old_leaf);
 
 		if (r != LOOKUP_FOUND)
@@ -210,7 +256,7 @@ btree_lookup_ge(struct btree_info *info,
 	for (level = 0; level < info->levels; level++) {
 		r = btree_lookup_raw(info, root, keys[level], upper_bound, key, value, &leaf);
 
-		if (old_leaf)
+		if (level)
 			tm_read_unlock(info->tm, old_leaf);
 
 		if (r != LOOKUP_FOUND)
@@ -398,7 +444,7 @@ int btree_insert(struct btree_info *info, block_t root,
 				      keys[level], block, &leaf, &leaf_node, &index))
 			abort();
 
-		if (old_leaf)
+		if (level)
 			tm_write_unlock(info->tm, old_leaf);
 
 		need_insert = ((index >= leaf_node->header.nr_entries) ||
