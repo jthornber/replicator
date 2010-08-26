@@ -207,11 +207,16 @@ int tm_write_unlock(struct transaction_manager *tm, block_t b)
 
 int tm_read_lock(struct transaction_manager *tm, block_t b, void **data)
 {
+	/*
+	 * IMPORTANT - I think there's a bug here *****************************************************************
+	 * FIXME: check the ref count is non zero
+	 */
 	return bm_lock(tm->bm, b, BM_LOCK_READ, data);
 }
 
 int tm_read_unlock(struct transaction_manager *tm, block_t b)
 {
+	/* FIXME: check reference count is still non-zero */
 	return bm_unlock(tm->bm, b, 0);
 }
 

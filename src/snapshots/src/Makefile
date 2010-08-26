@@ -1,5 +1,6 @@
 SNAPSHOT_DIR=src/snapshots/src
 LIB_OBJECTS+=\
+	$(SNAPSHOT_DIR)/array.o \
 	$(SNAPSHOT_DIR)/block_manager.o \
 	$(SNAPSHOT_DIR)/space_map.o \
 	$(SNAPSHOT_DIR)/btree.o \
