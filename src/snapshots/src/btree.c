@@ -296,15 +296,15 @@ static int btree_split(struct transaction_manager *tm, block_t block, count_adju
 	if (!tm_new_block(tm, &right_block, (void **) &right))
 		abort();
 
-	nr_left = node->header.nr_entries / 2;
-	nr_right = node->header.nr_entries - nr_left;
+	nr_left = left->header.nr_entries / 2;
+	nr_right = left->header.nr_entries - nr_left;
 
 	left->header.nr_entries = nr_left;
 
-	right->header.flags = node->header.flags;
+	right->header.flags = left->header.flags;
 	right->header.nr_entries = nr_right;
-	memcpy(right->keys, node->keys + nr_left, nr_right * sizeof(right->keys[0]));
-	memcpy(right->values, node->values + nr_left, nr_right * sizeof(right->values[0]));
+	memcpy(right->keys, left->keys + nr_left, nr_right * sizeof(right->keys[0]));
+	memcpy(right->values, left->values + nr_left, nr_right * sizeof(right->values[0]));
 
 	/* Patch up the parent */
 	if (parent_node) {

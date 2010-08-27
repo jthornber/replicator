@@ -53,8 +53,11 @@ int tm_rollback(struct transaction_manager *tm);
  * cases).
  *
  * tm_shadow_block() will allocate a new block and copy the data from orig
- * to it.  Because the tm knows the scope of the transaction it can
- * optimise requests for a shadow of a shadow to a no-op.
+ * to it.  It then decrements the reference count on original block.  Use
+ * this to update the contents of a block in a data structure, don't
+ * confuse this with a clone - you shouldn't access the orig block after
+ * this operation.  Because the tm knows the scope of the transaction it
+ * can optimise requests for a shadow of a shadow to a no-op.
  *
  * The |inc_children| flag is used to tell the caller whether they need to
  * adjust reference counts for children.
