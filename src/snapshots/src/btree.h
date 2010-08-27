@@ -18,13 +18,14 @@
  * functions.  Often the leaves are simply block ids, so here's a standard
  * function for that case.
  */
-typedef void (*count_adjust_fn)(struct transaction_manager *tm, uint64_t value, int32_t count_delta);
-void value_is_block(struct transaction_manager *tm, uint64_t value, int32_t delta);
-void value_is_meaningless(struct transaction_manager *tm, uint64_t value, int32_t delta);
+typedef void (*count_adjust_fn)(struct transaction_manager *tm, void *value, int32_t count_delta);
+void value_is_block(struct transaction_manager *tm, void *value, int32_t delta);
+void value_is_meaningless(struct transaction_manager *tm, void *value, int32_t delta);
 
 struct btree_info {
 	struct transaction_manager *tm;
 	unsigned levels;	/* number of nested btrees */
+	uint32_t value_size;
 	count_adjust_fn adjust;
 };
 
@@ -41,10 +42,11 @@ enum lookup_result {
 };
 
 /* Tries to find a key that matches exactly.  O(ln(n)) */
+/* FIXME: rename this to plain btree_looup */
 enum lookup_result
 btree_lookup_equal(struct btree_info *info,
 		   block_t root, uint64_t *keys,
-		   uint64_t *value);
+		   void *value);
 
 /*
  * Find the greatest key that is less than or equal to that requested.  A
@@ -54,7 +56,7 @@ btree_lookup_equal(struct btree_info *info,
 enum lookup_result
 btree_lookup_le(struct btree_info *info,
 		block_t root, uint64_t *keys,
-		uint64_t *rkey, uint64_t *value);
+		uint64_t *rkey, void *value);
 
 /*
  * Find the least key that is greater than or equal to that requested.
@@ -63,14 +65,14 @@ btree_lookup_le(struct btree_info *info,
 enum lookup_result
 btree_lookup_ge(struct btree_info *info,
 		block_t root, uint64_t *keys,
-		uint64_t *rkey, uint64_t *value);
+		uint64_t *rkey, void *value);
 
 /*
  * Insertion (or overwrite an existing value).
  * O(ln(n))
  */
 int btree_insert(struct btree_info *info,
-		 block_t root, uint64_t *keys, uint64_t value,
+		 block_t root, uint64_t *keys, void *value,
 		 block_t *new_root);
 
 /* Remove a key if present. O(ln(n)) */
@@ -102,11 +104,11 @@ int btree_clone(struct btree_info *info,
  * are they blocks to be referenced or something else ?  So |leaf_fn| is
  * passed in to make this decision.
  */
-typedef void (*leaf_fn)(uint64_t leaf_value, uint32_t *ref_counts);
-int btree_walk(struct transaction_manager *tm, leaf_fn lf,
+typedef void (*leaf_fn)(void *value, uint32_t *ref_counts);
+int btree_walk(struct btree_info *info, leaf_fn lf,
 	       block_t *roots, unsigned count, uint32_t *ref_counts);
 
-int btree_walk_h(struct transaction_manager *tm, leaf_fn lf,
+int btree_walk_h(struct btree_info *info, leaf_fn lf,
 		 block_t *roots, unsigned count,
 		 unsigned levels, uint32_t *ref_counts);
 

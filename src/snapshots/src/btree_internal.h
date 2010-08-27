@@ -19,19 +19,16 @@ enum node_flags {
 struct node_header {
         uint32_t flags;
         uint32_t nr_entries;
+	uint32_t max_entries;
+
+	uint32_t padding;
 };
 
 typedef uint64_t snap_t;
 
-
-/* MAX_ENTRIES must be an odd number */
-#define MAX_ENTRIES 255
-
 struct node {
 	struct node_header header;
-
-	uint64_t keys[MAX_ENTRIES];
-	uint64_t values[MAX_ENTRIES];
+	uint64_t keys[0];
 };
 
 

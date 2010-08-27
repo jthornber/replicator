@@ -20,8 +20,21 @@ static void barf(const char *msg)
 	abort();
 }
 
+static void *value_ptr(struct node *n, uint32_t index, size_t value_size)
+{
+	void *values_start = &n->keys[n->header.max_entries];
+	return values_start + (value_size * index);
+}
+
+/* assumes the values are suitably aligned */
+static uint64_t value64(struct node *n, uint32_t index)
+{
+	uint64_t *values = (uint64_t *) &n->keys[n->header.max_entries];
+	return values[index];
+}
+
 /* a little sanity check */
-static void check_keys(block_t b, struct node *n)
+static void check_keys(struct btree_info *info, block_t b, struct node *n)
 {
 	unsigned i;
 
@@ -31,7 +44,7 @@ static void check_keys(block_t b, struct node *n)
 
 		/* check for cycles */
 		if (n->header.flags & INTERNAL_NODE)
-			assert(n->values[i] != b);
+			assert(value64(n, i) != b);
 	}
 }
 
@@ -56,35 +69,48 @@ static int upper_bound(struct node *n, uint64_t key)
 	return i;
 }
 
-static void inc_children(struct transaction_manager *tm, struct node *n, count_adjust_fn fn)
+static void inc_children(struct btree_info *info, struct node *n, count_adjust_fn fn)
 {
 	unsigned i;
 	if (n->header.flags & INTERNAL_NODE)
 		for (i = 0; i < n->header.nr_entries; i++)
-			tm_inc(tm, n->values[i]);
+			tm_inc(info->tm, value64(n, i));
 	else
 		for (i = 0; i < n->header.nr_entries; i++)
-			fn(tm, n->values[i], 1);
+			fn(info->tm, value_ptr(n, i, info->value_size), 1);
 }
 
-static void insert_at(struct node *node, unsigned index, uint64_t key, uint64_t value)
+static void insert_at(struct btree_info *info,
+		      struct node *node, unsigned index, uint64_t key, void *value)
 {
-	if (index > node->header.nr_entries || index >= MAX_ENTRIES)
+	if (index > node->header.nr_entries || index >= node->header.max_entries)
 		abort();
 
 	if ((node->header.nr_entries > 0) && (index < node->header.nr_entries)) {
 		memmove(node->keys + index + 1, node->keys + index,
 			(node->header.nr_entries - index) * sizeof(node->keys[0]));
-		memmove(node->values + index + 1, node->values + index,
-			(node->header.nr_entries - index) * sizeof(node->values[0]));
+		memmove(value_ptr(node, index + 1, info->value_size),
+			value_ptr(node, index, info->value_size),
+			(node->header.nr_entries - index) * info->value_size);
 	}
 
 	node->keys[index] = key;
-	node->values[index] = value;
+	memcpy(value_ptr(node, index, info->value_size), value, info->value_size);
 	node->header.nr_entries++;
 }
 
 /*----------------------------------------------------------------*/
+
+static uint32_t calc_max_entries(size_t value_size, size_t block_size)
+{
+	uint32_t n;
+	size_t elt_size = sizeof(uint64_t) + value_size;
+	block_size -= sizeof(struct node_header);
+	n = block_size / elt_size;
+	if (n % 2 == 0)
+		--n;
+	return n;
+}
 
 int btree_empty(struct btree_info *info, block_t *root)
 {
@@ -95,9 +121,10 @@ int btree_empty(struct btree_info *info, block_t *root)
 		return 0;
 	}
 
-	memset(node, 0, sizeof(*node));
+	memset(node, 0, BLOCK_SIZE);
 	node->header.flags = LEAF_NODE;
 	node->header.nr_entries = 0;
+	node->header.max_entries = calc_max_entries(info->value_size, BLOCK_SIZE);
 
 	tm_write_unlock(info->tm, *root);
 
@@ -125,17 +152,17 @@ int btree_del_(struct btree_info *info, block_t root, unsigned level)
 
 		if (n->header.flags & INTERNAL_NODE) {
 			for (i = 0; i < n->header.nr_entries; i++)
-				if (!btree_del_(info, n->values[i], level))
+				if (!btree_del_(info, value64(n, i), level))
 					return 0;
 
 		} else if (level < (info->levels - 1)) {
 			for (i = 0; i < n->header.nr_entries; i++)
-				if (!btree_del_(info, n->values[i], level + 1))
+				if (!btree_del_(info, value64(n, i), level + 1))
 					return 0;
 
 		} else
 			for (i = 0; i < n->header.nr_entries; i++)
-				info->adjust(info->tm, n->values[i], -1);
+				info->adjust(info->tm, value_ptr(n, i, info->value_size), -1);
 
 		if (!tm_read_unlock(info->tm, root))
 			abort();
@@ -153,7 +180,7 @@ int btree_del(struct btree_info *info, block_t root)
 static enum lookup_result
 btree_lookup_raw(struct btree_info *info, block_t root,
 		 uint64_t key, int (*search_fn)(struct node *, uint64_t),
-		 uint64_t *result_key, uint64_t *value, block_t *leaf_block)
+		 uint64_t *result_key, void *v, block_t *leaf_block)
 {
         int i;
         block_t block = root, parent = 0;
@@ -176,12 +203,13 @@ btree_lookup_raw(struct btree_info *info, block_t root,
 		}
 
 		parent = block;
-		block = node->values[i];
+		if (node->header.flags & INTERNAL_NODE)
+			block = value64(node, i);
 
         } while (!(node->header.flags & LEAF_NODE));
 
 	*result_key = node->keys[i];
-	*value = node->values[i];
+	memcpy(v, value_ptr(node, i, info->value_size), info->value_size);
 	*leaf_block = parent;
 	return LOOKUP_FOUND;
 }
@@ -189,15 +217,16 @@ btree_lookup_raw(struct btree_info *info, block_t root,
 enum lookup_result
 btree_lookup_equal(struct btree_info *info,
 		   block_t root, uint64_t *keys,
-		   uint64_t *value)
+		   void *value)
 {
-	unsigned level;
+	unsigned level, last_level = info->levels - 1;
 	enum lookup_result r;
-	uint64_t rkey;
+	uint64_t rkey, internal_value;
 	block_t leaf, old_leaf = 0;
 
 	for (level = 0; level < info->levels; level++) {
-		r = btree_lookup_raw(info, root, keys[level], lower_bound, &rkey, value, &leaf);
+		r = btree_lookup_raw(info, root, keys[level], lower_bound, &rkey,
+				     level == last_level ? value : &internal_value, &leaf);
 
 		if (level)
 			tm_read_unlock(info->tm, old_leaf);
@@ -211,7 +240,7 @@ btree_lookup_equal(struct btree_info *info,
 			return r;
 
 		old_leaf = leaf;
-		root = *value;
+		root = internal_value;
 	}
 
 	tm_read_unlock(info->tm, leaf);
@@ -221,14 +250,16 @@ btree_lookup_equal(struct btree_info *info,
 enum lookup_result
 btree_lookup_le(struct btree_info *info,
 		block_t root, uint64_t *keys,
-		uint64_t *key, uint64_t *value)
+		uint64_t *key, void *value)
 {
-	unsigned level;
+	unsigned level, last_level = info->levels - 1;
 	enum lookup_result r;
+	uint64_t internal_value;
 	block_t leaf, old_leaf = 0;
 
 	for (level = 0; level < info->levels; level++) {
-		r = btree_lookup_raw(info, root, keys[level], lower_bound, key, value, &leaf);
+		r = btree_lookup_raw(info, root, keys[level], lower_bound, key,
+				     level == last_level ? value : &internal_value, &leaf);
 
 		if (level)
 			tm_read_unlock(info->tm, old_leaf);
@@ -237,7 +268,7 @@ btree_lookup_le(struct btree_info *info,
 			return r;
 
 		old_leaf = leaf;
-		root = *value;
+		root = internal_value;
 	}
 
 	tm_read_unlock(info->tm, old_leaf);
@@ -247,14 +278,16 @@ btree_lookup_le(struct btree_info *info,
 enum lookup_result
 btree_lookup_ge(struct btree_info *info,
 		block_t root, uint64_t *keys,
-		uint64_t *key, uint64_t *value)
+		uint64_t *key, void *value)
 {
-	unsigned level;
+	unsigned level, last_level = info->levels - 1;
 	enum lookup_result r;
+	uint64_t internal_value;
 	block_t leaf, old_leaf = 0;
 
 	for (level = 0; level < info->levels; level++) {
-		r = btree_lookup_raw(info, root, keys[level], upper_bound, key, value, &leaf);
+		r = btree_lookup_raw(info, root, keys[level], upper_bound, key,
+				     level == last_level ? value : &internal_value, &leaf);
 
 		if (level)
 			tm_read_unlock(info->tm, old_leaf);
@@ -263,7 +296,7 @@ btree_lookup_ge(struct btree_info *info,
 			return r;
 
 		old_leaf = leaf;
-		root = *value;
+		root = internal_value;
 	}
 
 	tm_read_unlock(info->tm, old_leaf);
@@ -274,7 +307,7 @@ btree_lookup_ge(struct btree_info *info,
  * Splits a full node.  Returning the desired side, indicated by |key|, in
  * |node_block| and |node|.
  */
-static int btree_split(struct transaction_manager *tm, block_t block, count_adjust_fn fn,
+static int btree_split(struct btree_info *info, block_t block, count_adjust_fn fn,
 		       struct node *node,
 		       block_t parent_block, struct node *parent_node, unsigned parent_index,
 		       block_t *result, struct node **result_node)
@@ -283,6 +316,8 @@ static int btree_split(struct transaction_manager *tm, block_t block, count_adju
 	unsigned nr_left, nr_right;
 	block_t left_block, right_block;
 	struct node *left, *right;
+	struct transaction_manager *tm = info->tm;
+	size_t size;
 
 	/* the parent still has a write lock, so it's safe to drop this lock */
 	tm_write_unlock(tm, block);
@@ -291,7 +326,7 @@ static int btree_split(struct transaction_manager *tm, block_t block, count_adju
 		abort();
 
 	if (inc)
-		inc_children(tm, left, fn);
+		inc_children(info, left, fn);
 
 	if (!tm_new_block(tm, &right_block, (void **) &right))
 		abort();
@@ -303,25 +338,29 @@ static int btree_split(struct transaction_manager *tm, block_t block, count_adju
 
 	right->header.flags = left->header.flags;
 	right->header.nr_entries = nr_right;
+	right->header.max_entries = left->header.max_entries;
 	memcpy(right->keys, left->keys + nr_left, nr_right * sizeof(right->keys[0]));
-	memcpy(right->values, left->values + nr_left, nr_right * sizeof(right->values[0]));
+
+	size = left->header.flags & INTERNAL_NODE ? sizeof(uint64_t) : info->value_size;
+	memcpy(value_ptr(right, 0, size), value_ptr(left, nr_left, size), size * nr_right);
 
 	/* Patch up the parent */
 	if (parent_node) {
-		assert(parent_node->values[parent_index] == block);
-		parent_node->values[parent_index] = left_block;
+		memcpy(value_ptr(parent_node, parent_index, sizeof(uint64_t)),
+		       &left_block, sizeof(uint64_t));
 
 		memmove(parent_node->keys + parent_index + 1,
 			parent_node->keys + parent_index,
 			(parent_node->header.nr_entries - parent_index) * sizeof(parent_node->keys[0]));
-		memmove(parent_node->values + parent_index + 1,
-			parent_node->values + parent_index,
-			(parent_node->header.nr_entries - parent_index) * sizeof(parent_node->values[0]));
+		memmove(value_ptr(parent_node, parent_index + 1, sizeof(uint64_t)),
+			value_ptr(parent_node, parent_index, sizeof(uint64_t)),
+			sizeof(uint64_t) * (parent_node->header.nr_entries - parent_index));
 
 		parent_node->keys[parent_index + 1] = right->keys[0];
-		parent_node->values[parent_index + 1] = right_block;
+		memcpy(value_ptr(parent_node, parent_index + 1, sizeof(uint64_t)),
+		       &right_block, sizeof(uint64_t));
 		parent_node->header.nr_entries++;
-		check_keys(parent_block, parent_node);
+		check_keys(info, parent_block, parent_node);
 
 		*result = parent_block;
 		*result_node = parent_node;
@@ -333,13 +372,17 @@ static int btree_split(struct transaction_manager *tm, block_t block, count_adju
 		if (!tm_new_block(tm, &nb, (void **) &nn))
 			barf("new node");
 
+		memset(nn, 0, BLOCK_SIZE);
 		nn->header.flags = INTERNAL_NODE;
 		nn->header.nr_entries = 2;
+		nn->header.max_entries = calc_max_entries(sizeof(uint64_t), BLOCK_SIZE);
 		nn->keys[0] = left->keys[0];
-		nn->values[0] = left_block;
+		memcpy(value_ptr(nn, 0, sizeof(uint64_t)),
+		       &left_block, sizeof(uint64_t));
 		nn->keys[1] = right->keys[0];
-		nn->values[1] = right_block;
-		check_keys(nb, nn);
+		memcpy(value_ptr(nn, 1, sizeof(uint64_t)),
+		       &right_block, sizeof(uint64_t));
+		check_keys(info, nb, nn);
 
 		*result = nb;
 		*result_node = nn;
@@ -351,13 +394,14 @@ static int btree_split(struct transaction_manager *tm, block_t block, count_adju
 	return 1;
 }
 
-static int btree_insert_raw(struct transaction_manager *tm, block_t root, count_adjust_fn fn, uint64_t key,
+static int btree_insert_raw(struct btree_info *info, block_t root, count_adjust_fn fn, uint64_t key,
 			    block_t *new_root, block_t *leaf,
 			    struct node **leaf_node, unsigned *index)
 {
         int i, parent_index = 0, inc;
         struct node *node, *parent_node = NULL;
 	block_t *block, parent_block = 0, new_root_ = 0, tmp_block, dup_block;
+	struct transaction_manager *tm = info->tm;
 
 	*new_root = root;
 	block = new_root;
@@ -369,13 +413,13 @@ static int btree_insert_raw(struct transaction_manager *tm, block_t root, count_
 		}
 
 		if (inc)
-			inc_children(tm, node, fn);
+			inc_children(info, node, fn);
 
-		if (node->header.nr_entries == MAX_ENTRIES) {
+		if (node->header.nr_entries == node->header.max_entries) {
 			/* FIXME: horrible hack */
 			tmp_block = *block;
 			block = &tmp_block;
-			if (!btree_split(tm, *block, fn, node,
+			if (!btree_split(info, *block, fn, node,
 					 parent_block, parent_node, parent_index,
 					 block, &node))
 				/* FIXME: handle this */
@@ -403,7 +447,7 @@ static int btree_insert_raw(struct transaction_manager *tm, block_t root, count_
 		parent_index = i;
 		parent_block = dup_block;
 		parent_node = node;
-		block = node->values + i;
+		block = value_ptr(node, i, sizeof(uint64_t));
         }
 
 	/*
@@ -420,14 +464,14 @@ static int btree_insert_raw(struct transaction_manager *tm, block_t root, count_
 
 	/* we're about to overwrite this value, so undo the increment for it */
 	if (node->keys[i] == key && inc)
-		fn(tm, node->values[i], -1);
+		fn(tm, value_ptr(node, i, info->value_size), -1);
 
 	*index = i;
 	return 1;
 }
 
 int btree_insert(struct btree_info *info, block_t root,
-		 uint64_t *keys, uint64_t value,
+		 uint64_t *keys, void *value,
 		 block_t *new_root)
 {
 	int need_insert;
@@ -439,7 +483,7 @@ int btree_insert(struct btree_info *info, block_t root,
 	block = new_root;
 
 	for (level = 0; level < info->levels; level++) {
-		if (!btree_insert_raw(info->tm, *block,
+		if (!btree_insert_raw(info, *block,
 				      level == last_level ? info->adjust : value_is_block,
 				      keys[level], block, &leaf, &leaf_node, &index))
 			abort();
@@ -452,10 +496,13 @@ int btree_insert(struct btree_info *info, block_t root,
 
 		if (level == last_level) {
 			if (need_insert)
-				insert_at(leaf_node, index, keys[level], value);
+				insert_at(info, leaf_node, index, keys[level], value);
 			else {
-				info->adjust(info->tm, leaf_node->values[index], -1);
-				leaf_node->values[index] = value;
+				info->adjust(info->tm,
+					     value_ptr(leaf_node, index, info->value_size),
+					     -1);
+				memcpy(value_ptr(leaf_node, index, info->value_size),
+				       value, info->value_size);
 			}
 		} else {
 			if (need_insert) {
@@ -463,12 +510,13 @@ int btree_insert(struct btree_info *info, block_t root,
 				if (!btree_empty(info, &new_root))
 					abort();
 
-				insert_at(leaf_node, index, keys[level], new_root);
+				insert_at(info, leaf_node, index, keys[level], &new_root);
 			}
 		}
 
 		old_leaf = leaf;
-		block = leaf_node->values + index;
+		if (level < last_level)
+			block = value_ptr(leaf_node, index, sizeof(uint64_t));
 	}
 
 	tm_write_unlock(info->tm, leaf);
@@ -486,28 +534,28 @@ int btree_clone(struct btree_info *info, block_t root, block_t *clone)
 	if (!tm_read_lock(info->tm, root, (void **) &orig_node))
 		abort();
 
-	memcpy(clone_node, orig_node, sizeof(*clone_node));
+	memcpy(clone_node, orig_node, BLOCK_SIZE);
 	tm_read_unlock(info->tm, root);
-	inc_children(info->tm, clone_node, info->adjust);
+	inc_children(info, clone_node, info->adjust);
 	tm_write_unlock(info->tm, *clone);
 
 	return 1;
 }
 
-void value_is_block(struct transaction_manager *tm, uint64_t value, int32_t delta)
+void value_is_block(struct transaction_manager *tm, void *value, int32_t delta)
 {
 	while (delta < 0) {
-		tm_dec(tm, value);
+		tm_dec(tm, *((uint64_t *) value));
 		delta++;
 	}
 
 	while (delta > 0) {
-		tm_inc(tm, value);
+		tm_inc(tm, *((uint64_t *) value));
 		delta--;
 	}
 }
 
-void value_is_meaningless(struct transaction_manager *tm, uint64_t value, int32_t delta)
+void value_is_meaningless(struct transaction_manager *tm, void *value, int32_t delta)
 {
 }
 
@@ -518,13 +566,14 @@ struct block_list {
 	block_t b;
 };
 
-static int btree_walk_(struct transaction_manager *tm, leaf_fn lf,
+static int btree_walk_(struct btree_info *info, leaf_fn lf,
 		       block_t root, unsigned levels, uint32_t *ref_counts, struct list *seen,
 		       struct pool *mem)
 {
 	unsigned i;
 	struct node *n;
 	struct list *l;
+	struct transaction_manager *tm = info->tm;
 
 	/*
 	 * We increment even if we've seen this node, however we don't
@@ -552,14 +601,14 @@ static int btree_walk_(struct transaction_manager *tm, leaf_fn lf,
 
 	if (n->header.flags & INTERNAL_NODE)
 		for (i = 0; i < n->header.nr_entries; i++)
-			btree_walk_(tm, lf, n->values[i], levels, ref_counts, seen, mem);
+			btree_walk_(info, lf, value64(n, i), levels, ref_counts, seen, mem);
 	else {
 		if (levels == 1)
 			for (i = 0; i < n->header.nr_entries; i++)
-				lf(n->values[i], ref_counts);
+				lf(value_ptr(n, i, info->value_size), ref_counts);
 		else
 			for (i = 0; i < n->header.nr_entries; i++)
-				btree_walk_(tm, lf, n->values[i], levels - 1, ref_counts,
+				btree_walk_(info, lf, value64(n, i), levels - 1, ref_counts,
 					    seen, mem);
 	}
 
@@ -568,7 +617,7 @@ static int btree_walk_(struct transaction_manager *tm, leaf_fn lf,
 	return 1;
 }
 
-int btree_walk(struct transaction_manager *tm, leaf_fn lf,
+int btree_walk(struct btree_info *info, leaf_fn lf,
 	       block_t *roots, unsigned count, uint32_t *ref_counts)
 {
 	int r;
@@ -581,13 +630,13 @@ int btree_walk(struct transaction_manager *tm, leaf_fn lf,
 
 	list_init(&seen);
 	for (i = 0; i < count; i++)
-		r = btree_walk_(tm, lf, roots[i], 1, ref_counts, &seen, mem);
+		r = btree_walk_(info, lf, roots[i], 1, ref_counts, &seen, mem);
 	pool_destroy(mem);
 	return r;
 }
 
 
-int btree_walk_h(struct transaction_manager *tm, leaf_fn lf,
+int btree_walk_h(struct btree_info *info, leaf_fn lf,
 		 block_t *roots, unsigned count,
 		 unsigned levels, uint32_t *ref_counts)
 {
@@ -601,7 +650,7 @@ int btree_walk_h(struct transaction_manager *tm, leaf_fn lf,
 
 	list_init(&seen);
 	for (i = 0; i < count; i++)
-		r = btree_walk_(tm, lf, roots[i], levels, ref_counts, &seen, mem);
+		r = btree_walk_(info, lf, roots[i], levels, ref_counts, &seen, mem);
 	pool_destroy(mem);
 	return r;
 }

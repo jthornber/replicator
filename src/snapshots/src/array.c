@@ -141,7 +141,7 @@ static int extend_(struct transaction_manager *tm,
 		if (!tm_write_unlock(tm, b))
 			abort();
 
-		if (!btree_insert(&info, a->btree, &i, b, &a->btree))
+		if (!btree_insert(&info, a->btree, &i, &b, &a->btree))
 			abort();
 	}
 	a->nr_elements = len;
@@ -288,7 +288,7 @@ int array_set(struct transaction_manager *tm,
 	if (!inc)		/* weird */
 		tm_inc(tm, b);
 
-	if (!btree_insert(&info, a->btree, &bi, nb, &a->btree)) {
+	if (!btree_insert(&info, a->btree, &bi, &nb, &a->btree)) {
 		tm_write_unlock(tm, root);
 		return 0;
 	}

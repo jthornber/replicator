@@ -348,7 +348,7 @@ static int io_insert(struct disk_io *io, block_t b, uint32_t ref_count)
 			abort();
 
 		return btree_insert(&io->info, io->new_root,
-				    &b, ref_count, &io->new_root);
+				    &b, &ref_count, &io->new_root);
 	}
 
 	return 1;
@@ -716,14 +716,14 @@ struct space_map *sm_open(struct transaction_manager *tm,
 
 /*----------------------------------------------------------------*/
 
-static void ignore_leaf(uint64_t leaf, uint32_t *ref_counts)
+static void ignore_leaf(void *leaf, uint32_t *ref_counts)
 {
 }
 
 int sm_walk(struct space_map *sm, uint32_t *ref_counts)
 {
 	struct sm *smc = (struct sm *) sm->context;
-	return btree_walk(smc->io.tm, ignore_leaf, &smc->io.root, 1, ref_counts) && bitmap_walk(smc->io.tm, &smc->io.bitmap_list, ref_counts);
+	return btree_walk(&smc->io.info, ignore_leaf, &smc->io.root, 1, ref_counts) && bitmap_walk(smc->io.tm, &smc->io.bitmap_list, ref_counts);
 }
 
 /*----------------------------------------------------------------*/

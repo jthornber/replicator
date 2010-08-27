@@ -212,7 +212,7 @@ static enum io_result snapshot_exception(struct pstore *ps,
 		abort();
 
 	value = pack_block_time(cow_dest, ps->time);
-	if (!btree_insert(&ps->snapshot_map_info, ps->tl->snapshot_maps, keys, value, &ps->tl->snapshot_maps))
+	if (!btree_insert(&ps->snapshot_map_info, ps->tl->snapshot_maps, keys, &value, &ps->tl->snapshot_maps))
 		abort();
 
 	to->dev = ps->dev;
@@ -299,7 +299,7 @@ static enum io_result origin_exception(struct pstore *ps,
 	if (!tm_alloc_block(ps->tm, &cow_dest))
 		abort();
 
-	if (!btree_insert(&ps->origin_map_info, ps->tl->origin_maps, keys, cow_dest, &ps->tl->origin_maps))
+	if (!btree_insert(&ps->origin_map_info, ps->tl->origin_maps, keys, &cow_dest, &ps->tl->origin_maps))
 		abort();
 
 	to->dev = ps->dev;
@@ -388,7 +388,7 @@ int new_snapshot(void *context, dev_t origin, dev_t snap)
 			abort();
 	}
 
-	if (!btree_insert(&ps->snapshot_tl_map_info, ps->tl->snapshot_maps, &snap, new_tree, &ps->tl->snapshot_maps))
+	if (!btree_insert(&ps->snapshot_tl_map_info, ps->tl->snapshot_maps, &snap, &new_tree, &ps->tl->snapshot_maps))
 		abort();
 	list_add(&ps->snaps, &sd->list);
 	return 1;
@@ -428,12 +428,12 @@ static int create_top_level(struct pstore *ps)
 	return commit(ps);
 }
 
-static void value_is_block_time(struct transaction_manager *tm, uint64_t value, int32_t delta)
+static void value_is_block_time(struct transaction_manager *tm, void *value, int32_t delta)
 {
 	block_t b;
 	uint64_t t;
-	unpack_block_time(value, &b, &t);
-	value_is_block(tm, b, delta);
+	unpack_block_time(*((uint64_t *) value), &b, &t);
+	value_is_block(tm, &b, delta);
 }
 
 struct exception_store *persistent_store_create(struct block_manager *bm, dev_t dev)
@@ -484,18 +484,18 @@ struct exception_store *persistent_store_create(struct block_manager *bm, dev_t 
 	return es;
 }
 
-void ignore_values(uint64_t leaf_value, uint32_t *ref_counts)
+void ignore_values(void *leaf_value, uint32_t *ref_counts)
 {
 }
 
-void block_values(uint64_t leaf_value, uint32_t *ref_counts)
+void block_values(void *leaf_value, uint32_t *ref_counts)
 {
-	ref_counts[leaf_value]++;
+	ref_counts[*((uint64_t *) leaf_value)]++;
 }
 
-void block_time_values(uint64_t leaf_value, uint32_t *ref_counts)
+void block_time_values(void *leaf_value, uint32_t *ref_counts)
 {
-	ref_counts[leaf_value >> 24]++;
+	ref_counts[*((uint64_t *) leaf_value) >> 24]++;
 }
 
 void ps_walk(struct exception_store *es, uint32_t *ref_counts)
@@ -508,8 +508,8 @@ void ps_walk(struct exception_store *es, uint32_t *ref_counts)
 
 	ref_counts[ps->superblock]++;
 	sm_walk(tm_get_sm(ps->tm), ref_counts);
-	btree_walk_h(ps->tm, block_values, &tl->origin_maps, 1, 2, ref_counts);
-	btree_walk_h(ps->tm, block_time_values, &tl->snapshot_maps, 1, 2, ref_counts);
+	btree_walk_h(&ps->origin_map_info, block_values, &tl->origin_maps, 1, 2, ref_counts);
+	btree_walk_h(&ps->snapshot_map_info, block_time_values, &tl->snapshot_maps, 1, 2, ref_counts);
 
 	tm_read_unlock(ps->tm, ps->superblock);
 }
