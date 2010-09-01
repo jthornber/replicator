@@ -22,11 +22,14 @@ typedef void (*count_adjust_fn)(struct transaction_manager *tm, void *value, int
 void value_is_block(struct transaction_manager *tm, void *value, int32_t delta);
 void value_is_meaningless(struct transaction_manager *tm, void *value, int32_t delta);
 
+typedef int (*equal_fn)(void *value1, void *value2);
+
 struct btree_info {
 	struct transaction_manager *tm;
 	unsigned levels;	/* number of nested btrees */
 	uint32_t value_size;
 	count_adjust_fn adjust;
+	equal_fn eq;
 };
 
 /* Set up an empty tree.  O(1). */

@@ -457,14 +457,17 @@ struct exception_store *persistent_store_create(struct block_manager *bm, dev_t 
 		ps->origin_map_info.tm = ps->tm;
 		ps->origin_map_info.levels = 2;
 		ps->origin_map_info.adjust = value_is_block;
+		ps->origin_map_info.eq = NULL;
 
 		ps->snapshot_tl_map_info.tm = ps->tm;
 		ps->snapshot_tl_map_info.levels = 1;
 		ps->snapshot_tl_map_info.adjust = value_is_block;
+		ps->snapshot_tl_map_info.eq = NULL;
 
 		ps->snapshot_map_info.tm = ps->tm;
 		ps->snapshot_map_info.levels = 2;
 		ps->snapshot_map_info.adjust = value_is_block_time;
+		ps->snapshot_map_info.eq = NULL;
 
 		list_init(&ps->snaps);
 

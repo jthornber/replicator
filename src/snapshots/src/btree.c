@@ -498,9 +498,10 @@ int btree_insert(struct btree_info *info, block_t root,
 			if (need_insert)
 				insert_at(info, leaf_node, index, keys[level], value);
 			else {
-				info->adjust(info->tm,
-					     value_ptr(leaf_node, index, info->value_size),
-					     -1);
+				if (!info->eq || !info->eq(value_ptr(leaf_node, index, info->value_size),
+							   value))
+					info->adjust(info->tm,
+						     value_ptr(leaf_node, index, info->value_size), -1);
 				memcpy(value_ptr(leaf_node, index, info->value_size),
 				       value, info->value_size);
 			}

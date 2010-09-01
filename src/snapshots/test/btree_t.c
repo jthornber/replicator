@@ -61,14 +61,16 @@ static void commit(struct transaction_manager *tm, block_t root)
 	tm_commit(tm, root);
 }
 
+#if 0
 static void ignore_leaf(void *leaf, uint32_t *ref_counts)
 {
 }
-
+#endif
 void check_reference_counts_(struct btree_info *info,
 			     block_t *roots, unsigned count,
 			     uint32_t *ref_counts, block_t nr_blocks)
 {
+#if 0
 	block_t b;
 	struct transaction_manager *tm = info->tm;
         struct space_map *sm = tm_get_sm(tm);
@@ -84,6 +86,7 @@ void check_reference_counts_(struct btree_info *info,
 			abort();
 		}
 	}
+#endif
 }
 
 void check_reference_counts(struct btree_info *info,
@@ -124,6 +127,7 @@ static void check_insert(struct transaction_manager *tm)
 	info.levels = 1;
 	info.value_size = sizeof(uint64_t);
 	info.adjust = value_is_meaningless;
+	info.eq = NULL;
 
 	tm_begin(tm);
 	if (!btree_empty(&info, &root))
@@ -158,6 +162,7 @@ static void check_multiple_commits(struct transaction_manager *tm)
 	info.levels = 1;
 	info.value_size = sizeof(uint64_t);
 	info.adjust = value_is_meaningless;
+	info.eq = NULL;
 
 	struct block_manager *bm = tm_get_bm(tm);
 	bm_start_io_trace(bm, "multiple_commits.trace");
@@ -208,6 +213,7 @@ static void check_multiple_commits_contiguous(struct transaction_manager *tm)
 	info.levels = 1;
 	info.value_size = sizeof(uint64_t);
 	info.adjust = value_is_meaningless;
+	info.eq = NULL;
 
 	tm_begin(tm);
 	if (!btree_empty(&info, &root))
@@ -270,6 +276,7 @@ static void check_insert_h(struct transaction_manager *tm)
 	info.levels = 4;
 	info.value_size = sizeof(uint64_t);
 	info.adjust = value_is_meaningless;
+	info.eq = NULL;
 
 	tm_begin(tm);
 	if (!btree_empty(&info, &root))
@@ -335,6 +342,7 @@ static void check_clone(struct transaction_manager *tm)
 	info.levels = 1;
 	info.value_size = sizeof(uint64_t);
 	info.adjust = value_is_meaningless;
+	info.eq = NULL;
 
 	tm_begin(tm);
 
@@ -379,6 +387,7 @@ static void check_leaf_ref_counts(struct transaction_manager *tm)
 	info.levels = 1;
 	info.value_size = sizeof(uint64_t);
 	info.adjust = value_is_block;
+	info.eq = NULL;
 
 	tm_begin(tm);
 
@@ -435,6 +444,7 @@ static void check_delete(struct transaction_manager *tm)
 	info.levels = 1;
 	info.value_size = sizeof(uint64_t);
 	info.adjust = value_is_meaningless;
+	info.eq = NULL;
 
 	tm_begin(tm);
 	if (!btree_empty(&info, &root))
@@ -462,6 +472,7 @@ static void check_delete_sep_trans(struct transaction_manager *tm)
 	info.levels = 1;
 	info.value_size = sizeof(uint64_t);
 	info.adjust = value_is_meaningless;
+	info.eq = NULL;
 
 	tm_begin(tm);
 	if (!btree_empty(&info, &root))
@@ -507,6 +518,7 @@ static void check_delete_h(struct transaction_manager *tm)
 	info.levels = 4;
 	info.value_size = sizeof(uint64_t);
 	info.adjust = value_is_meaningless;
+	info.eq = NULL;
 
 	tm_begin(tm);
 	if (!btree_empty(&info, &root))
@@ -535,6 +547,7 @@ static void check_delete_clone(struct transaction_manager *tm)
 	info.levels = 1;
 	info.value_size = sizeof(uint64_t);
 	info.adjust = value_is_meaningless;
+	info.eq = NULL;
 
 	tm_begin(tm);
 	if (!btree_empty(&info, &root))
@@ -576,6 +589,7 @@ static void check_value_size(struct transaction_manager *tm, size_t size)
 	info.levels = 1;
 	info.value_size = size;
 	info.adjust = value_is_meaningless;
+	info.eq = NULL;
 
 	tm_begin(tm);
 	if (!btree_empty(&info, &root))
@@ -691,7 +705,7 @@ int main(int argc, char **argv)
 	for (i = 0; i < sizeof(table_) / sizeof(*table_); i++) {
 		printf("running %s\n", table_[i].name);
 
-		bm = block_manager_create(open_file(), BLOCK_SIZE, NR_BLOCKS, 64);
+		bm = block_manager_create(open_file(), BLOCK_SIZE, NR_BLOCKS, 128);
 		tm = tm_create(bm);
 
 		table_[i].fn(tm);

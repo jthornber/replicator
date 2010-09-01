@@ -24,6 +24,7 @@ static void init_info(struct transaction_manager *tm, struct btree_info *info)
 	info->tm = tm;
 	info->levels = 1;
 	info->adjust = value_is_block;
+	info->eq = NULL;
 }
 
 int array_empty(struct transaction_manager *tm,
