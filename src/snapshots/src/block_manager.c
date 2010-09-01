@@ -318,7 +318,7 @@ static void add_to_lru(struct block_manager *bm, struct block *b)
 	assert(b->write_count == 0);
 
 	list_del(&b->list);
-	list_add_h(&bm->lru_list, &b->list);
+	list_add(&bm->lru_list, &b->list);
 }
 
 static void add_to_locked(struct block_manager *bm, struct block *b)
