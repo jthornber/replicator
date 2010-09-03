@@ -486,7 +486,7 @@ int main(int argc, char **argv)
 	for (i = 0; i < sizeof(table_) / sizeof(*table_); i++) {
 		int fd = open_file();
 		struct exception_store *ps;
-		struct block_manager *bm = block_manager_create(fd, BLOCK_SIZE, NR_BLOCKS, 64);
+		struct block_manager *bm = block_manager_create(fd, BLOCK_SIZE, NR_BLOCKS, 128);
 
 		if (!bm)
 			abort();

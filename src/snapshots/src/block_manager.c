@@ -98,7 +98,10 @@ static struct block *alloc_block_(struct block_manager *bm)
 	b->read_count = 0;
 	b->write_count = 0;
 
-	bm->blocks_allocated++;  /* FIXME: unprotected */
+	bm->blocks_allocated++;
+	if (bm->trace)
+		fprintf(bm->trace, "cache size %u\n", bm->blocks_allocated);
+
 	return b;
 }
 
@@ -148,8 +151,13 @@ static int write_block(struct block_manager *bm, struct block *b)
 
 static void complete_io(struct block_manager *bm, struct block *b)
 {
-	list_move(&bm->lru_list, &b->list);
+	/* io is never scheduled on a write locked buffer */
+	if (!b->read_count)
+		list_move(&bm->lru_list, &b->list);
 	b->dirty = 0;
+
+	if (bm->trace)
+		fprintf(bm->trace, "io complete %u\n", (unsigned) b->where);
 }
 
 static void fail_io(struct block_manager *bm, struct block *b)
@@ -185,10 +193,13 @@ static unsigned check_io(struct block_manager *bm)
 	return count;
 }
 
-static int wait_io(struct block_manager *bm, struct block *b)
+static int wait_io(struct block_manager *bm, struct block *b, int trace)
 {
 	int r;
 	struct aiocb const *ptrs[1];
+
+	if (trace && bm->trace)
+		fprintf(bm->trace, "wait %u {\n", (unsigned) b->where);
 
 	ptrs[0] = &b->aiocb;
 
@@ -208,19 +219,29 @@ static int wait_io(struct block_manager *bm, struct block *b)
 	}
 
 	complete_io(bm, b);
+
+	if (trace && bm->trace)
+		fprintf(bm->trace, "}\n");
+
 	return r == 0;
 }
 
-static int wait_all_io(struct block_manager *bm)
+static int wait_all_writes(struct block_manager *bm)
 {
 	struct block *b, *tmp;
 
+	if (bm->trace)
+		fprintf(bm->trace, "wait all writes {\n");
+
 	list_iterate_items_safe (b, tmp, &bm->io_list) {
-		int r = wait_io(bm, b);
-		if (!r)
-			return 0;
+		if (b->dirty) {
+			if (!wait_io(bm, b, 0))
+				return 0;
+		}
 	}
 
+	if (bm->trace)
+		fprintf(bm->trace, "}\n");
 	return 1;
 }
 
@@ -234,6 +255,9 @@ static unsigned wait_any_io(struct block_manager *bm)
 	if (!cbs)
 		return 0;
 
+	if (bm->trace)
+		fprintf(bm->trace, "wait any {\n");
+
 	i = 0;
 	list_iterate_items (b, &bm->io_list)
 		cbs[i++] = &b->aiocb;
@@ -245,7 +269,30 @@ static unsigned wait_any_io(struct block_manager *bm)
 	if (r < 0)
 		abort();
 
-	return check_io(bm);
+	r = check_io(bm);
+
+	if (bm->trace)
+		fprintf(bm->trace, "}\n");
+
+	return r;
+}
+
+static void free_block(struct block_manager *bm, struct block *b)
+{
+	/*
+	 * No locks should be held at this point.
+	 */
+	if (b->read_count || b->write_count)
+		abort();
+
+	list_del(&b->list);
+	list_del(&b->hash);
+	free(b->alloc);
+	free(b);
+	bm->blocks_allocated--;
+
+	if (bm->trace)
+		fprintf(bm->trace, "cache size %u\n", bm->blocks_allocated);
 }
 
 static struct block *alloc_block(struct block_manager *bm)
@@ -268,7 +315,11 @@ static struct block *alloc_block(struct block_manager *bm)
 					b->dirty = 0;
 					b->read_count = 0;
 					b->write_count = 0;
-					return b;
+
+					if (bm->blocks_allocated > bm->cache_size)
+						free_block(bm, b);
+					else
+						return b;
 				}
 			}
 
@@ -278,21 +329,7 @@ static struct block *alloc_block(struct block_manager *bm)
 	return alloc_block_(bm);
 }
 
-static void free_block(struct block_manager *bm, struct block *b)
-{
-	/*
-	 * No locks should be held at this point.
-	 */
-	if (b->read_count || b->write_count)
-		abort();
-
-	list_del(&b->list);
-	list_del(&b->hash);
-	free(b->alloc);
-	free(b);
-	bm->blocks_allocated--;
-}
-
+#if 0
 static void reap_lru(struct block_manager *bm)
 {
 	struct list *l, *tmp;
@@ -303,15 +340,11 @@ static void reap_lru(struct block_manager *bm)
 			break;
 
 		b = list_struct_base(l, struct block, list);
-		if (b->dirty) {
+		if (b->dirty)
 			write_block(bm, b);
-			wait_io(bm, b);
-		}
-
-		free_block(bm, b);
 	}
 }
-
+#endif
 static void add_to_lru(struct block_manager *bm, struct block *b)
 {
 	assert(b->read_count == 0);
@@ -358,8 +391,6 @@ static void unlock_block(struct block_manager *bm, struct block *b)
 		assert(b->write_count == 0);
 		add_to_lru(bm, b);
 	}
-
-	reap_lru(bm);
 }
 
 static unsigned hash_block(struct block_manager *bm, block_t b)
@@ -444,13 +475,13 @@ void block_manager_destroy(struct block_manager *bm)
 {
 	struct list *l, *tmp;
 
-	if (bm->trace)
-		fclose(bm->trace);
-
 	list_iterate_safe (l, tmp, &bm->lru_list) {
 		struct block *b = list_struct_base(l, struct block, list);
 		free_block(bm, b);
 	}
+
+	if (bm->trace)
+		fclose(bm->trace);
 
 	free(bm->buckets);
 	free(bm);
@@ -472,6 +503,8 @@ static int bm_lock_(struct block_manager *bm, block_t block, enum block_lock how
 
 	b = find_block(bm, block);
 	if (b) {
+		if (bm->trace)
+			fprintf(bm->trace, "cache hit %u\n", (unsigned) block);
 		*data = b->data;
 		lock_block(bm, b, how);
 	} else {
@@ -482,7 +515,7 @@ static int bm_lock_(struct block_manager *bm, block_t block, enum block_lock how
 		b->where = block;
 
 		if (need_read) {
-			if (!read_block(bm, b) || !wait_io(bm, b)) {
+			if (!read_block(bm, b) || !wait_io(bm, b, 1)) {
 				free_block(bm, b);
 				return 0;
 			}
@@ -554,7 +587,7 @@ int bm_flush(struct block_manager *bm, int block)
 		}
 	}
 
-	wait_all_io(bm);
+	wait_all_writes(bm);
 
 	return r;
 }

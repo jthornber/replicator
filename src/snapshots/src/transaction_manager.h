@@ -37,7 +37,8 @@ int tm_begin(struct transaction_manager *tm);
  * *must* have a write lock held on |root|.  The commit will drop the write
  * lock.
  */
-int tm_pre_commit(struct transaction_manager *tm, block_t *space_map_root);
+int tm_pre_commit(struct transaction_manager *tm,
+		  block_t *bitmap_root, block_t *ref_count_root);
 int tm_commit(struct transaction_manager *tm, block_t root);
 
 /* FIXME: not implemented, possibly not needed. */

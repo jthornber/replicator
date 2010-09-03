@@ -81,9 +81,9 @@ int tm_begin(struct transaction_manager *tm)
 	return 1;
 }
 
-int tm_pre_commit(struct transaction_manager *tm, block_t *space_map_root)
+int tm_pre_commit(struct transaction_manager *tm, block_t *bitmap_root, block_t *ref_count_root)
 {
-	sm_flush(tm->sm, space_map_root);
+	sm_flush(tm->sm, bitmap_root, ref_count_root);
 	bm_flush(tm->bm, 0);
 	tm->pre_committed = 1;
 	return 1;

@@ -11,7 +11,8 @@
 /*----------------------------------------------------------------*/
 
 struct top_level {
-	block_t space_map;
+	block_t space_bitmap;
+	block_t space_ref_count;
 	block_t origin_maps;	/* a btree of origin maps */
 	block_t snapshot_maps;	/* a btree of snapshot maps */
 };
@@ -161,7 +162,7 @@ int commit(void *context)
 {
 	struct pstore *ps = (struct pstore *) context;
 
-	if (!tm_pre_commit(ps->tm, &ps->tl->space_map))
+	if (!tm_pre_commit(ps->tm, &ps->tl->space_bitmap, &ps->tl->space_ref_count))
 		abort();
 
 	if (!tm_commit(ps->tm, ps->superblock))
@@ -456,16 +457,19 @@ struct exception_store *persistent_store_create(struct block_manager *bm, dev_t 
 
 		ps->origin_map_info.tm = ps->tm;
 		ps->origin_map_info.levels = 2;
+		ps->origin_map_info.value_size = sizeof(uint64_t);
 		ps->origin_map_info.adjust = value_is_block;
 		ps->origin_map_info.eq = NULL;
 
 		ps->snapshot_tl_map_info.tm = ps->tm;
 		ps->snapshot_tl_map_info.levels = 1;
+		ps->snapshot_tl_map_info.value_size = sizeof(uint64_t);
 		ps->snapshot_tl_map_info.adjust = value_is_block;
 		ps->snapshot_tl_map_info.eq = NULL;
 
 		ps->snapshot_map_info.tm = ps->tm;
 		ps->snapshot_map_info.levels = 2;
+		ps->snapshot_map_info.value_size = sizeof(uint64_t);
 		ps->snapshot_map_info.adjust = value_is_block_time;
 		ps->snapshot_map_info.eq = NULL;
 

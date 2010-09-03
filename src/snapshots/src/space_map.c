@@ -272,28 +272,7 @@ io_find_unused(struct disk_io *io, block_t begin, block_t end, block_t *result)
 
 	return LOOKUP_NOT_FOUND;
 }
-#if 0
-static int io_clone(struct disk_io *from, struct disk_io *to)
-{
-	memcpy(to, from, sizeof(*from));
 
-	if (!btree_clone(&to->bitmap_info, from->bitmap_root, &to->bitmap_root))
-		return 0;
-
-	if (!btree_clone(&to->ref_count_info, from->ref_count_root, &to->ref_count_root)) {
-		btree_del(&to->bitmap_info, to->bitmap_root);
-		return 0;
-	}
-
-	return 1;
-}
-
-static void io_del(struct disk_io *io)
-{
-	btree_del(&io->bitmap_info, io->bitmap_root);
-	btree_del(&io->ref_count_info, io->ref_count_root);
-}
-#endif
 static int io_insert(struct disk_io *io, block_t b, uint32_t ref_count)
 {
 	uint32_t bit, old;
@@ -639,7 +618,7 @@ static int flush_once(struct sm *sm)
 	return 1;
 }
 
-static int flush(void *context, block_t *new_root)
+static int flush(void *context, block_t *new_bitmap_root, block_t *new_ref_count_root)
 {
 	struct sm *sm = (struct sm *) context;
 	unsigned i;
@@ -667,6 +646,8 @@ static int flush(void *context, block_t *new_root)
 		list_init(sm->buckets + i);
 	}
 	memcpy(&sm->io_old, &sm->io, sizeof(sm->io));
+	*new_bitmap_root = sm->io.bitmap_root;
+	*new_ref_count_root = sm->io.ref_count_root;
 	return 1;
 }
 

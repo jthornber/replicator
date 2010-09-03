@@ -80,7 +80,7 @@ static void inc_children(struct btree_info *info, struct node *n, count_adjust_f
 			fn(info->tm, value_ptr(n, i, info->value_size), 1);
 }
 
-static void insert_at(struct btree_info *info,
+static void insert_at(size_t value_size,
 		      struct node *node, unsigned index, uint64_t key, void *value)
 {
 	if (index > node->header.nr_entries || index >= node->header.max_entries)
@@ -89,13 +89,13 @@ static void insert_at(struct btree_info *info,
 	if ((node->header.nr_entries > 0) && (index < node->header.nr_entries)) {
 		memmove(node->keys + index + 1, node->keys + index,
 			(node->header.nr_entries - index) * sizeof(node->keys[0]));
-		memmove(value_ptr(node, index + 1, info->value_size),
-			value_ptr(node, index, info->value_size),
-			(node->header.nr_entries - index) * info->value_size);
+		memmove(value_ptr(node, index + 1, value_size),
+			value_ptr(node, index, value_size),
+			(node->header.nr_entries - index) * value_size);
 	}
 
 	node->keys[index] = key;
-	memcpy(value_ptr(node, index, info->value_size), value, info->value_size);
+	memcpy(value_ptr(node, index, value_size), value, value_size);
 	node->header.nr_entries++;
 }
 
@@ -180,7 +180,7 @@ int btree_del(struct btree_info *info, block_t root)
 static enum lookup_result
 btree_lookup_raw(struct btree_info *info, block_t root,
 		 uint64_t key, int (*search_fn)(struct node *, uint64_t),
-		 uint64_t *result_key, void *v, block_t *leaf_block)
+		 uint64_t *result_key, void *v, size_t value_size, block_t *leaf_block)
 {
         int i;
         block_t block = root, parent = 0;
@@ -209,7 +209,7 @@ btree_lookup_raw(struct btree_info *info, block_t root,
         } while (!(node->header.flags & LEAF_NODE));
 
 	*result_key = node->keys[i];
-	memcpy(v, value_ptr(node, i, info->value_size), info->value_size);
+	memcpy(v, value_ptr(node, i, value_size), value_size);
 	*leaf_block = parent;
 	return LOOKUP_FOUND;
 }
@@ -226,7 +226,9 @@ btree_lookup_equal(struct btree_info *info,
 
 	for (level = 0; level < info->levels; level++) {
 		r = btree_lookup_raw(info, root, keys[level], lower_bound, &rkey,
-				     level == last_level ? value : &internal_value, &leaf);
+				     level == last_level ? value : &internal_value,
+				     level == last_level ? info->value_size : sizeof(uint64_t),
+				     &leaf);
 
 		if (level)
 			tm_read_unlock(info->tm, old_leaf);
@@ -259,7 +261,9 @@ btree_lookup_le(struct btree_info *info,
 
 	for (level = 0; level < info->levels; level++) {
 		r = btree_lookup_raw(info, root, keys[level], lower_bound, key,
-				     level == last_level ? value : &internal_value, &leaf);
+				     level == last_level ? value : &internal_value,
+				     level == last_level ? info->value_size : sizeof(uint64_t),
+				     &leaf);
 
 		if (level)
 			tm_read_unlock(info->tm, old_leaf);
@@ -287,7 +291,9 @@ btree_lookup_ge(struct btree_info *info,
 
 	for (level = 0; level < info->levels; level++) {
 		r = btree_lookup_raw(info, root, keys[level], upper_bound, key,
-				     level == last_level ? value : &internal_value, &leaf);
+				     level == last_level ? value : &internal_value,
+				     level == last_level ? info->value_size : sizeof(uint64_t),
+				     &leaf);
 
 		if (level)
 			tm_read_unlock(info->tm, old_leaf);
@@ -496,7 +502,7 @@ int btree_insert(struct btree_info *info, block_t root,
 
 		if (level == last_level) {
 			if (need_insert)
-				insert_at(info, leaf_node, index, keys[level], value);
+				insert_at(info->value_size, leaf_node, index, keys[level], value);
 			else {
 				if (!info->eq || !info->eq(value_ptr(leaf_node, index, info->value_size),
 							   value))
@@ -511,7 +517,7 @@ int btree_insert(struct btree_info *info, block_t root,
 				if (!btree_empty(info, &new_root))
 					abort();
 
-				insert_at(info, leaf_node, index, keys[level], &new_root);
+				insert_at(sizeof(uint64_t), leaf_node, index, keys[level], &new_root);
 			}
 		}
 

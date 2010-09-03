@@ -48,8 +48,13 @@ struct space_map_ops {
 	 * Flushes all changes to disk.  Fills out the root of the new on
 	 * disk space map, so the caller can make a note of it in their top
 	 * level node.
+	 *
+	 * FIXME: the output vars are so specific, we should just give back
+	 * 'n' roots.
 	 */
-	int (*flush)(void *context, block_t *new_root);
+	int (*flush)(void *context,
+		     block_t *new_bitmap_root,
+		     block_t *new_ref_count_root);
 };
 
 struct space_map {
@@ -79,8 +84,10 @@ static inline int sm_get_count(struct space_map *sm, block_t b, uint32_t *result
 	return sm->ops->get_count(sm->context, b, result);
 }
 
-static inline int sm_flush(struct space_map *sm, block_t *new_root) {
-	return sm->ops->flush(sm->context, new_root);
+static inline int sm_flush(struct space_map *sm,
+			   block_t *new_bitmap_root,
+			   block_t *new_ref_count_root) {
+	return sm->ops->flush(sm->context, new_bitmap_root, new_ref_count_root);
 }
 
 /*----------------------------------------------------------------*/

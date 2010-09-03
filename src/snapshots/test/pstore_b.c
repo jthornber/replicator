@@ -76,7 +76,7 @@ int owrite_block(void *context, block_t b, const void *data)
 
 	case IO_NEED_COPY:
 		/* simulate the copy */
-		if (!bm_lock(oc->bm, to.block, WRITE, &cow_data))
+		if (!bm_lock_no_read(oc->bm, to.block, WRITE, &cow_data))
 			abort();
 
 		bm_unlock(oc->bm, to.block, 1);
@@ -176,7 +176,7 @@ int cwrite_block(void *context, block_t b, const void *data)
 		abort();
 
 	case IO_MAPPED:
-		bm_lock(sc->bm, to.block, WRITE, &cow_data);
+		bm_lock_no_read(sc->bm, to.block, WRITE, &cow_data);
 		memcpy(cow_data, data, BLOCK_SIZE);
 		bm_unlock(sc->bm, to.block, 1);
 		break;
@@ -387,7 +387,7 @@ int main(int argc, char **argv)
 	for (i = 0; i < sizeof(table_) / sizeof(*table_); i++) {
 		int fd = open_file();
 		struct exception_store *ps;
-		struct block_manager *bm = block_manager_create(fd, BLOCK_SIZE, NR_BLOCKS, 128);
+		struct block_manager *bm = block_manager_create(fd, BLOCK_SIZE, NR_BLOCKS, 16);
 
 		if (!bm)
 			abort();
