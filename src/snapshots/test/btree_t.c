@@ -562,7 +562,7 @@ static void check_delete_clone(struct transaction_manager *tm)
 	/* overwrite some values so the two trees diverge nicely */
 	i = 0;
 	list_iterate_items (nl, &randoms_) {
-		uint64_t zero;
+		uint64_t zero = 0;
 		if (!btree_insert(&info, clone, &nl->key, &zero, &clone))
 			abort();
 		if (++i > 1000)

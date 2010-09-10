@@ -334,7 +334,7 @@ struct exception_ops ops = {
 	.get_snapshot_detail = get_snapshot_detail,
 	.begin = begin,
 	.commit = commit,
-	.snapshot_map = snapshot_map,
+	.map = snapshot_map,
 	.new_snapshot = new_snapshot,
 	.del_snapshot = del_snapshot
 };

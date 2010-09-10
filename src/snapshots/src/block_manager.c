@@ -113,6 +113,7 @@ static int read_block(struct block_manager *bm, struct block *b)
 	b->aiocb.aio_buf = b->data;
 	b->aiocb.aio_nbytes = bm->block_size;
 
+	list_move(&bm->io_list, &b->list);
 	if (aio_read(&b->aiocb) < 0) {
 		abort();
 		return 0;
@@ -123,7 +124,6 @@ static int read_block(struct block_manager *bm, struct block *b)
 	if (bm->trace)
 		fprintf(bm->trace, "read %u\n", (unsigned) b->where);
 
-	list_move(&bm->io_list, &b->list);
 	return 1;
 }
 
@@ -135,6 +135,7 @@ static int write_block(struct block_manager *bm, struct block *b)
 	b->aiocb.aio_buf = b->data;
 	b->aiocb.aio_nbytes = bm->block_size;
 
+	list_move(&bm->io_list, &b->list);
 	if (aio_write(&b->aiocb) < 0) {
 		abort();
 		return 0;
@@ -145,15 +146,12 @@ static int write_block(struct block_manager *bm, struct block *b)
 	if (bm->trace)
 		fprintf(bm->trace, "write %u\n", (unsigned) b->where);
 
-	list_move(&bm->io_list, &b->list);
 	return 1;
 }
 
 static void complete_io(struct block_manager *bm, struct block *b)
 {
-	/* io is never scheduled on a write locked buffer */
-	if (!b->read_count)
-		list_move(&bm->lru_list, &b->list);
+	list_move(&bm->lru_list, &b->list);
 	b->dirty = 0;
 
 	if (bm->trace)
@@ -349,15 +347,12 @@ static void add_to_lru(struct block_manager *bm, struct block *b)
 {
 	assert(b->read_count == 0);
 	assert(b->write_count == 0);
-
-	list_del(&b->list);
-	list_add(&bm->lru_list, &b->list);
+	list_move(&bm->lru_list, &b->list);
 }
 
 static void add_to_locked(struct block_manager *bm, struct block *b)
 {
-	list_del(&b->list);
-	list_add_h(&bm->locked_list, &b->list);
+	list_move(&bm->locked_list, &b->list);
 }
 
 static void lock_block(struct block_manager *bm, struct block *b, enum block_lock how)
