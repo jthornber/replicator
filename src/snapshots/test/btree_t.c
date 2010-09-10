@@ -56,8 +56,8 @@ static void free_randoms()
  */
 static void commit(struct transaction_manager *tm, block_t root)
 {
-	block_t sm_root;
-	tm_pre_commit(tm, &sm_root);
+	block_t sm_bitmap_root, sm_ref_count_root;
+	tm_pre_commit(tm, &sm_bitmap_root, &sm_ref_count_root);
 	tm_commit(tm, root);
 }
 

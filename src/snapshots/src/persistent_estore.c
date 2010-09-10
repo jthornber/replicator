@@ -13,7 +13,6 @@
 struct top_level {
 	block_t space_bitmap;
 	block_t space_ref_count;
-	block_t origin_maps;	/* a btree of origin maps */
 	block_t snapshot_maps;	/* a btree of snapshot maps */
 };
 
@@ -33,7 +32,6 @@ struct pstore {
 	struct block_manager *bm;
 	struct transaction_manager *tm;
 
-	struct btree_info origin_map_info;
 	struct btree_info snapshot_tl_map_info; /* the top level, so we can
 						 * insert clones of other
 						 * snaps */
@@ -76,7 +74,7 @@ static int find_snapshot(struct pstore *ps, dev_t snap, struct snapshot_list **r
 
 	return 0;
 }
-
+#if 0
 static int snap_time(struct pstore *ps, dev_t snap, uint64_t *time)
 {
 	struct snapshot_list *sl;
@@ -87,7 +85,7 @@ static int snap_time(struct pstore *ps, dev_t snap, uint64_t *time)
 	*time = sl->creation_time;
 	return 1;
 }
-
+#endif
 static int snap_origin(struct pstore *ps, dev_t snap, dev_t *origin)
 {
 	struct snapshot_list *sl;
@@ -172,36 +170,6 @@ int commit(void *context)
 	return 1;
 }
 
-static enum io_result origin_read_since(struct pstore *ps,
-					uint64_t since,
-					struct location *from,
-					struct location *to)
-{
-	uint64_t keys[2], result_key, result_value;
-
-	keys[0] = from->dev;
-	keys[1] = pack_block_time(from->block, since);
-
-	switch (btree_lookup_ge(&ps->origin_map_info, ps->tl->origin_maps, keys,
-				&result_key, &result_value)) {
-	case LOOKUP_ERROR:
-		return IO_ERROR;
-
-	case LOOKUP_NOT_FOUND:
-		/* map to the origin, there is no exception */
-		to->dev = from->dev;
-		to->block = from->block;
-		break;
-
-	case LOOKUP_FOUND:
-		to->dev = ps->dev;
-		to->block = result_value;
-		break;
-	}
-
-	return IO_MAPPED;
-}
-
 static enum io_result snapshot_exception(struct pstore *ps,
 					 uint64_t *keys,
 					 struct location *to)
@@ -244,16 +212,12 @@ enum io_result snapshot_map(void *context,
 		if (io_type == WRITE)
 			return snapshot_exception(ps, keys, to);
 		else {
-			/* great, just use the origin mapping */
-			uint64_t t;
-			if (!snap_time(ps, from->dev, &t))
+			/* just use the origin mapping */
+			if (!snap_origin(ps, from->dev, &to->dev))
 				abort();
 
-			/* FIXME: this messes up |from| */
-			if (!snap_origin(ps, from->dev, &from->dev))
-				abort();
-
-			return origin_read_since(ps, t, from, to);
+			to->block = from->block;
+			return IO_MAPPED;
 		}
 		break;
 
@@ -291,48 +255,11 @@ enum io_result snapshot_map(void *context,
 	return IO_ERROR;
 }
 
-static enum io_result origin_exception(struct pstore *ps,
-				       uint64_t *keys,
-				       struct location *to)
-{
-	block_t cow_dest;
-
-	if (!tm_alloc_block(ps->tm, &cow_dest))
-		abort();
-
-	if (!btree_insert(&ps->origin_map_info, ps->tl->origin_maps, keys, &cow_dest, &ps->tl->origin_maps))
-		abort();
-
-	to->dev = ps->dev;
-	to->block = cow_dest;
-	return IO_NEED_COPY;
-}
-
 enum io_result origin_write(void *context,
 			    struct location *from,
 			    struct location *to)
 {
-	struct pstore *ps = (struct pstore *) context;
-	uint64_t keys[2], result_value;
-
-	keys[0] = from->dev;
-	keys[1] = pack_block_time(from->block, ps->time);
-
-	switch (btree_lookup_equal(&ps->origin_map_info, ps->tl->origin_maps,
-				     keys, &result_value)) {
-	case LOOKUP_ERROR:
-		return IO_ERROR;
-
-	case LOOKUP_NOT_FOUND:
-		return origin_exception(ps, keys, to);
-
-	case LOOKUP_FOUND:
-		to->dev = from->dev;
-		to->block = from->block;
-		return IO_MAPPED;
-	}
-
-	return IO_ERROR;
+	return snapshot_map(context, from, WRITE, to);
 }
 
 int new_snapshot(void *context, dev_t origin, dev_t snap)
@@ -408,7 +335,6 @@ struct exception_ops ops = {
 	.begin = begin,
 	.commit = commit,
 	.snapshot_map = snapshot_map,
-	.origin_write = origin_write,
 	.new_snapshot = new_snapshot,
 	.del_snapshot = del_snapshot
 };
@@ -420,9 +346,6 @@ static int create_top_level(struct pstore *ps)
 	begin(ps);
 
 	memset(ps->tl, 0, sizeof(*ps->tl));
-	if (!btree_empty(&ps->origin_map_info, &ps->tl->origin_maps))
-		abort();
-
 	if (!btree_empty(&ps->snapshot_map_info, &ps->tl->snapshot_maps))
 		abort();
 
@@ -454,12 +377,6 @@ struct exception_store *persistent_store_create(struct block_manager *bm, dev_t 
 		ps->superblock = 0;
 		tm_reserve_block(ps->tm, ps->superblock);
 		ps->tl = NULL;
-
-		ps->origin_map_info.tm = ps->tm;
-		ps->origin_map_info.levels = 2;
-		ps->origin_map_info.value_size = sizeof(uint64_t);
-		ps->origin_map_info.adjust = value_is_block;
-		ps->origin_map_info.eq = NULL;
 
 		ps->snapshot_tl_map_info.tm = ps->tm;
 		ps->snapshot_tl_map_info.levels = 1;
@@ -515,7 +432,6 @@ void ps_walk(struct exception_store *es, uint32_t *ref_counts)
 
 	ref_counts[ps->superblock]++;
 	sm_walk(tm_get_sm(ps->tm), ref_counts);
-	btree_walk_h(&ps->origin_map_info, block_values, &tl->origin_maps, 1, 2, ref_counts);
 	btree_walk_h(&ps->snapshot_map_info, block_time_values, &tl->snapshot_maps, 1, 2, ref_counts);
 
 	tm_read_unlock(ps->tm, ps->superblock);

@@ -28,8 +28,7 @@ enum io_direction {
 enum io_result {
 	IO_BAD_PARAM,		/* eg, this snapshot isn't in this store */
 	IO_ERROR,		/* something went wrong */
-	IO_NEED_COPY,		/* it's a new mapping, do the copy then callback */
-	IO_MAPPED		/* simple, pre-existing mapping */
+	IO_MAPPED		/* use this mapping */
 };
 
 typedef void (*io_complete_fn)(void *context, enum io_result outcome, struct location *result);
@@ -63,24 +62,10 @@ struct exception_ops {
 	int (*begin)(void *context);
 	int (*commit)(void *context);
 
-	/*
-	 * If IO_NEED_COPY is returned then the client should ensure that
-	 * this is completed before this transaction is completed.
-	 */
-	enum io_result (*snapshot_map)(void *context,
-				       struct location *from,
-				       enum io_direction io_type,
-				       struct location *to);
-
-	/*
-	 * |to| is only useful when IO_NEED_COPY is returned.
-         * Client should ensure that the copy has been completed before
-         * commit is called.
-	 */
-	enum io_result (*origin_write)(void *context,
-				       struct location *from,
-				       struct location *to);
-
+	enum io_result (*map)(void *context,
+			      struct location *from,
+			      enum io_direction io_type,
+			      struct location *to);
 
 	/*
 	 * Finally we need a way of creating a new snapshot.  The origin
@@ -137,20 +122,12 @@ estore_commit(struct exception_store *es)
 }
 
 static inline
-enum io_result estore_snapshot_map(struct exception_store *es,
-				   struct location *from,
-				   enum io_direction io_type,
-				   struct location *to)
+enum io_result estore_map(struct exception_store *es,
+			  struct location *from,
+			  enum io_direction io_type,
+			  struct location *to)
 {
-	return es->ops->snapshot_map(es->context, from, io_type, to);
-}
-
-static inline
-enum io_result estore_origin_write(struct exception_store *es,
-				   struct location *from,
-				   struct location *to)
-{
-	return es->ops->origin_write(es->context, from, to);
+	return es->ops->map(es->context, from, io_type, to);
 }
 
 static inline int
