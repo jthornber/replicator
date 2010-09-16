@@ -224,6 +224,8 @@ static void check_multiple_commits_contiguous(struct transaction_manager *tm)
 	list_iterate_items (nl, &randoms_) {
 		if (!btree_insert(&info, root, &key, &nl->value, &root))
 			barf("insert");
+		check_locks(tm);
+
 		key++;
 		if (i++ % 100 == 0) {
 			commit(tm, root);
@@ -232,7 +234,6 @@ static void check_multiple_commits_contiguous(struct transaction_manager *tm)
 	}
 
 	commit(tm, root);
-	check_locks(tm);
 
 	key = 0;
 	list_iterate_items (nl, &randoms_) {
