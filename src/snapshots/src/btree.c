@@ -11,18 +11,34 @@
 
 /*----------------------------------------------------------------*/
 
-/* junk */
+/* array manipulation */
+
+static void array_insert(void *base, size_t elt_size, unsigned nr_elts,
+			 unsigned index, void *elt)
+{
+	if (index < nr_elts)
+		memmove(base + (elt_size * (index + 1)),
+			base + (elt_size * index),
+			(nr_elts - index) * elt_size);
+	memcpy(base + (elt_size * index), elt, elt_size);
+}
+
+/*----------------------------------------------------------------*/
+
+static void *value_base(struct node *n)
+{
+	return &n->keys[n->header.max_entries];
+}
 
 static void *value_ptr(struct node *n, uint32_t index, size_t value_size)
 {
-	void *values_start = &n->keys[n->header.max_entries];
-	return values_start + (value_size * index);
+	return value_base(n) + (value_size * index);
 }
 
 /* assumes the values are suitably aligned */
 static uint64_t value64(struct node *n, uint32_t index)
 {
-	uint64_t *values = (uint64_t *) &n->keys[n->header.max_entries];
+	uint64_t *values = value_base(n);
 	return values[index];
 }
 
@@ -79,16 +95,8 @@ static void insert_at(size_t value_size,
 	if (index > node->header.nr_entries || index >= node->header.max_entries)
 		abort();
 
-	if ((node->header.nr_entries > 0) && (index < node->header.nr_entries)) {
-		memmove(node->keys + index + 1, node->keys + index,
-			(node->header.nr_entries - index) * sizeof(node->keys[0]));
-		memmove(value_ptr(node, index + 1, value_size),
-			value_ptr(node, index, value_size),
-			(node->header.nr_entries - index) * value_size);
-	}
-
-	node->keys[index] = key;
-	memcpy(value_ptr(node, index, value_size), value, value_size);
+	array_insert(node->keys, sizeof(*node->keys), node->header.nr_entries, index, &key);
+	array_insert(value_base(node), value_size, node->header.nr_entries, index, value);
 	node->header.nr_entries++;
 }
 
@@ -561,17 +569,7 @@ static int btree_split(struct shadow_spine *s, block_t root, count_adjust_fn fn,
 		memcpy(value_ptr(p, parent_index, sizeof(uint64_t)),
 		       &left->b, sizeof(uint64_t));
 
-		memmove(p->keys + parent_index + 1,
-			p->keys + parent_index,
-			(p->header.nr_entries - parent_index) * sizeof(p->keys[0]));
-		memmove(value_ptr(p, parent_index + 1, sizeof(uint64_t)),
-			value_ptr(p, parent_index, sizeof(uint64_t)),
-			sizeof(uint64_t) * (p->header.nr_entries - parent_index));
-
-		p->keys[parent_index + 1] = r->keys[0];
-		memcpy(value_ptr(p, parent_index + 1, sizeof(uint64_t)),
-		       &right->b, sizeof(uint64_t));
-		p->header.nr_entries++;
+		insert_at(sizeof(uint64_t), p, parent_index + 1, r->keys[0], &right->b);
 		check_keys(s->info, parent->b, p);
 
 	} else {
@@ -586,14 +584,10 @@ static int btree_split(struct shadow_spine *s, block_t root, count_adjust_fn fn,
 
 		memset(nn, 0, BLOCK_SIZE);
 		nn->header.flags = INTERNAL_NODE;
-		nn->header.nr_entries = 2;
+		nn->header.nr_entries = 0;
 		nn->header.max_entries = calc_max_entries(sizeof(uint64_t), BLOCK_SIZE);
-		nn->keys[0] = l->keys[0];
-		memcpy(value_ptr(nn, 0, sizeof(uint64_t)),
-		       &left->b, sizeof(uint64_t));
-		nn->keys[1] = r->keys[0];
-		memcpy(value_ptr(nn, 1, sizeof(uint64_t)),
-		       &right->b, sizeof(uint64_t));
+		insert_at(sizeof(uint64_t), nn, 0, l->keys[0], &left->b);
+		insert_at(sizeof(uint64_t), nn, 1, r->keys[0], &right->b);
 		check_keys(s->info, nbn.b, nn);
 
 		/* rejig the spine */
@@ -730,11 +724,123 @@ int btree_insert(struct btree_info *info, block_t root,
 	exit_shadow_spine(&spine);
 	return 1;
 }
+
 #if 0
+/* FIXME: move this all to a separate file ? */
+struct maybe_count {
+	int has_value;
+	unsigned value;
+};
+
+static void nothing(struct maybe_count *c)
+{
+	c->has_value = 0;
+}
+
+static void just(struct maybe_count *c, unsigned v)
+{
+	c->has_value = 1;
+	c->value = v;
+}
+
+static int is_just(struct maybe_count *c)
+{
+	return c->has_value;
+}
+
+static int get_entry_count(struct node *parent, int index, struct maybe_count *c)
+{
+	struct node_block nb;
+
+	if ((index < 0) ||
+	    (index > parent->header.nr_entries - 1)) {
+		nothing(c);
+		return 1;
+	}
+
+	nb.b = value64(p->n, parent_index - 1);
+	if (!read_lock(&nb))
+		return 0;
+
+	just(c, nb.n->header.nr_entries);
+	if (!unlock(&nb))
+		return 0;
+
+	return 1;
+}
+
+static int btree_merge(struct shadow_spine *s, unsigned parent_index, size_t value_size)
+{
+	struct node *p = shadow_parent(s), *c = shadow_current(s);
+	struct maybe_count left_count, right_count;
+
+	/* you can't merge the root node */
+	if (!p)
+		return 0;
+
+	/* look at the neighbouring nodes */
+	if (!get_entry_count(p->n, ((int) parent_index) - 1, &left_count) ||
+	    !get_entry_count(p->n, ((int) parent_index) + 1, &right_count))
+		return 0;
+
+	/* merge scenarios:
+	 * 1) left + current into a single node
+	 * 2) current + right into 1 node
+	 * 3) move some of left and right into current
+	 * 4) move some of left into current
+	 * 5) move some of right into current
+	 */
+	if (is_just(&left_count)) {
+		if (left_count.value < merge_threshold(c->n)) {
+			/* scenario 1 */
+			struct block_node left;
+			left.b = value64(p->n, parent_index - 1);
+			if (!read_lock(&left)) {
+				return 0;
+			}
+
+			memmove(c->n->keys + (sizeof(uint64_t) * left_count.value),
+				c->n->keys,
+				c->n->header.nr_entries * sizeof(uint64_t));
+			memcpy(c->n->keys,
+			       left.n->keys,
+			       left_count.value * sizeof(uint64_t));
+
+			memmove(value_ptr(c->n, left_count.value, value_size),
+				value_ptr(c->n, 0, value_size),
+				c->n->header.nr_entries * );
+		}
+	}
+
+	if (is_just(&right_count)) {
+		if (right_count.value < merge_threshold(c->n)) {
+			/* scenario 2 */
+		}
+	}
+
+	if (is_just(&left_count) && is_just(&right_count)) {
+		/* scenario 3 */
+	}
+
+	if (is_just(&left_count)) {
+		/* scenario 4 */
+
+	} else {
+		/* scenario 5 */
+	}
+
+	return 1;
+}
+
 int btree_remove(struct btree_info *info,
 		 block_t root, uint64_t *keys,
 		 block_t *new_root)
 {
+	struct shadow_spine spine;
+	struct node *n;
+
+	init_shadow_spine(&spine, info);
+
 	*new_root = root;
 	block = new_root;
 
@@ -759,7 +865,6 @@ int btree_remove(struct btree_info *info,
 
 }
 #endif
-
 int btree_clone(struct btree_info *info, block_t root, block_t *clone)
 {
 	struct node *clone_node, *orig_node;
