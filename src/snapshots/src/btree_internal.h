@@ -1,6 +1,7 @@
 #ifndef SNAPSHOTS_BTREE_INTERNAL_H
 #define SNAPSHOTS_BTREE_INTERNAL_H
 
+#include "btree.h"
 #include "datastruct/list.h"
 
 /*----------------------------------------------------------------*/
@@ -50,6 +51,102 @@ struct btree {
 	struct space_map *sm;
 };
 
+void inc_children(struct btree_info *info, struct node *n, count_adjust_fn fn);
+
+/*
+ * The block_node struct ties together a block from the block manager and a node.
+ */
+enum bn_state {
+	BN_UNLOCKED,
+	BN_READ_LOCKED,
+	BN_WRITE_LOCKED
+};
+
+struct block_node {
+	enum bn_state state;
+	block_t b;
+	struct node *n;
+};
+
+static inline void bn_init(struct block_node *bn, block_t b) {
+	bn->state = BN_UNLOCKED;
+	bn->b = b;
+	bn->n = NULL;
+}
+
+int read_lock(struct btree_info *info, struct block_node *bn);
+int shadow(struct btree_info *info, struct block_node *bn, count_adjust_fn fn, int *inc);
+int new_block(struct btree_info *info, struct block_node *bn);
+int unlock(struct btree_info *info, struct block_node *bn);
+
+/*
+ * Spines keep track of the rolling locks.  There are 2 variants, read-only
+ * and one that uses shadowing.  These are separate structs to allow the
+ * type checker to spot misuse, for example accidentally calling read_lock
+ * on a shadow spine.
+ */
+struct ro_spine {
+	struct btree_info *info;
+
+	int count;
+	struct block_node nodes[2];
+};
+
+void init_ro_spine(struct ro_spine *s, struct btree_info *info);
+int exit_ro_spine(struct ro_spine *s);
+int ro_step(struct ro_spine *s, block_t new_child);
+struct node *ro_node(struct ro_spine *s);
+
+struct shadow_spine {
+	struct btree_info *info;
+
+	int count;
+	struct block_node nodes[2];
+
+	block_t root;
+};
+
+void init_shadow_spine(struct shadow_spine *s, struct btree_info *info);
+int exit_shadow_spine(struct shadow_spine *s);
+int shadow_step(struct shadow_spine *s, block_t b, count_adjust_fn fn, int *inc);
+struct block_node *shadow_current(struct shadow_spine *s);
+struct block_node *shadow_parent(struct shadow_spine *s);
+int shadow_root(struct shadow_spine *s);
+
+
+/*
+ * Some inlines.
+ */
+static inline uint64_t *key_ptr(struct node *n, uint32_t index)
+{
+	return n->keys + index;
+}
+
+static inline void *value_base(struct node *n)
+{
+	return &n->keys[n->header.max_entries];
+}
+
+static inline void *value_ptr(struct node *n, uint32_t index, size_t value_size)
+{
+	return value_base(n) + (value_size * index);
+}
+
+/* assumes the values are suitably aligned */
+static inline uint64_t value64(struct node *n, uint32_t index)
+{
+	uint64_t *values = value_base(n);
+	return values[index];
+}
+
+
+/*
+ * Exported for testing.
+ */
+uint32_t calc_max_entries(size_t value_size, size_t block_size);
+void insert_at(size_t value_size,
+	       struct node *node, unsigned index, uint64_t key, void *value);
+int btree_merge(struct shadow_spine *s, unsigned parent_index, size_t value_size);
 
 /*----------------------------------------------------------------*/
 

@@ -495,4 +495,3 @@ int ps_diff_space_map(const char *file, struct exception_store *ps_,
 }
 
 /*----------------------------------------------------------------*/
-

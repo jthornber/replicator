@@ -78,7 +78,11 @@ int btree_insert(struct btree_info *info,
 		 block_t root, uint64_t *keys, void *value,
 		 block_t *new_root);
 
-/* Remove a key if present. O(ln(n)) */
+/* Remove a key if present.  This doesn't remove empty sub trees.  Normally
+ * subtrees represent a separate entity, like a snapshot map, so this is
+ * correct behaviour.
+ * O(ln(n)).
+ */
 int btree_remove(struct btree_info *info,
 		 block_t root, uint64_t *keys,
 		 block_t *new_root);

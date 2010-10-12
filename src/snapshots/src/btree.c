@@ -11,27 +11,19 @@
 
 /*----------------------------------------------------------------*/
 
-/* junk */
+/* array manipulation */
 
-/* FIXME: substitute for real error handling */
-static void barf(const char *msg)
+static void array_insert(void *base, size_t elt_size, unsigned nr_elts,
+			 unsigned index, void *elt)
 {
-	fprintf(stderr, "%s", msg);
-	abort();
+	if (index < nr_elts)
+		memmove(base + (elt_size * (index + 1)),
+			base + (elt_size * index),
+			(nr_elts - index) * elt_size);
+	memcpy(base + (elt_size * index), elt, elt_size);
 }
 
-static void *value_ptr(struct node *n, uint32_t index, size_t value_size)
-{
-	void *values_start = &n->keys[n->header.max_entries];
-	return values_start + (value_size * index);
-}
-
-/* assumes the values are suitably aligned */
-static uint64_t value64(struct node *n, uint32_t index)
-{
-	uint64_t *values = (uint64_t *) &n->keys[n->header.max_entries];
-	return values[index];
-}
+/*----------------------------------------------------------------*/
 
 /* a little sanity check */
 static void check_keys(struct btree_info *info, block_t b, struct node *n)
@@ -69,7 +61,7 @@ static int upper_bound(struct node *n, uint64_t key)
 	return i;
 }
 
-static void inc_children(struct btree_info *info, struct node *n, count_adjust_fn fn)
+void inc_children(struct btree_info *info, struct node *n, count_adjust_fn fn)
 {
 	unsigned i;
 	if (n->header.flags & INTERNAL_NODE)
@@ -80,28 +72,20 @@ static void inc_children(struct btree_info *info, struct node *n, count_adjust_f
 			fn(info->tm, value_ptr(n, i, info->value_size), 1);
 }
 
-static void insert_at(size_t value_size,
-		      struct node *node, unsigned index, uint64_t key, void *value)
+void insert_at(size_t value_size,
+	       struct node *node, unsigned index, uint64_t key, void *value)
 {
 	if (index > node->header.nr_entries || index >= node->header.max_entries)
 		abort();
 
-	if ((node->header.nr_entries > 0) && (index < node->header.nr_entries)) {
-		memmove(node->keys + index + 1, node->keys + index,
-			(node->header.nr_entries - index) * sizeof(node->keys[0]));
-		memmove(value_ptr(node, index + 1, value_size),
-			value_ptr(node, index, value_size),
-			(node->header.nr_entries - index) * value_size);
-	}
-
-	node->keys[index] = key;
-	memcpy(value_ptr(node, index, value_size), value, value_size);
+	array_insert(node->keys, sizeof(*node->keys), node->header.nr_entries, index, &key);
+	array_insert(value_base(node), value_size, node->header.nr_entries, index, value);
 	node->header.nr_entries++;
 }
 
 /*----------------------------------------------------------------*/
 
-static uint32_t calc_max_entries(size_t value_size, size_t block_size)
+uint32_t calc_max_entries(size_t value_size, size_t block_size)
 {
 	uint32_t n;
 	size_t elt_size = sizeof(uint64_t) + value_size;
@@ -178,39 +162,30 @@ int btree_del(struct btree_info *info, block_t root)
 }
 
 static enum lookup_result
-btree_lookup_raw(struct btree_info *info, block_t root,
-		 uint64_t key, int (*search_fn)(struct node *, uint64_t),
-		 uint64_t *result_key, void *v, size_t value_size, block_t *leaf_block)
+btree_lookup_raw(struct ro_spine *s, block_t block, uint64_t key, int (*search_fn)(struct node *, uint64_t),
+		 uint64_t *result_key, void *v, size_t value_size)
 {
-        int i;
-        block_t block = root, parent = 0;
-        struct node *node;
+	int i;
 
 	do {
-		if (!tm_read_lock(info->tm, block, (void **) &node)) {
-			if (parent)
-				tm_read_unlock(info->tm, parent);
+		if (!ro_step(s, block)) {
+			exit_ro_spine(s);
 			return LOOKUP_ERROR;
 		}
 
-		if (parent)
-			tm_read_unlock(info->tm, parent);
-
-		i = search_fn(node, key);
-		if (i < 0 || i >= node->header.nr_entries) {
-			tm_read_unlock(info->tm, block);
+		i = search_fn(ro_node(s), key);
+		if (i < 0 || i >= ro_node(s)->header.nr_entries) {
+			exit_ro_spine(s);
 			return LOOKUP_NOT_FOUND;
 		}
 
-		parent = block;
-		if (node->header.flags & INTERNAL_NODE)
-			block = value64(node, i);
+		if (ro_node(s)->header.flags & INTERNAL_NODE)
+			block = value64(ro_node(s), i);
 
-        } while (!(node->header.flags & LEAF_NODE));
+        } while (!(ro_node(s)->header.flags & LEAF_NODE));
 
-	*result_key = node->keys[i];
-	memcpy(v, value_ptr(node, i, value_size), value_size);
-	*leaf_block = parent;
+	*result_key = ro_node(s)->keys[i];
+	memcpy(v, value_ptr(ro_node(s), i, value_size), value_size);
 	return LOOKUP_FOUND;
 }
 
@@ -222,30 +197,28 @@ btree_lookup_equal(struct btree_info *info,
 	unsigned level, last_level = info->levels - 1;
 	enum lookup_result r;
 	uint64_t rkey, internal_value;
-	block_t leaf, old_leaf = 0;
+	struct ro_spine spine;
 
+	init_ro_spine(&spine, info);
 	for (level = 0; level < info->levels; level++) {
-		r = btree_lookup_raw(info, root, keys[level], lower_bound, &rkey,
+		r = btree_lookup_raw(&spine, root, keys[level], lower_bound, &rkey,
 				     level == last_level ? value : &internal_value,
-				     level == last_level ? info->value_size : sizeof(uint64_t),
-				     &leaf);
-
-		if (level)
-			tm_read_unlock(info->tm, old_leaf);
+				     level == last_level ? info->value_size : sizeof(uint64_t));
 
 		if (r == LOOKUP_FOUND) {
 			if (rkey != keys[level]) {
-				tm_read_unlock(info->tm, leaf);
+				exit_ro_spine(&spine);
 				return LOOKUP_NOT_FOUND;
 			}
-		} else
+		} else {
+			exit_ro_spine(&spine);
 			return r;
+		}
 
-		old_leaf = leaf;
 		root = internal_value;
 	}
 
-	tm_read_unlock(info->tm, leaf);
+	exit_ro_spine(&spine);
 	return r;
 }
 
@@ -257,25 +230,24 @@ btree_lookup_le(struct btree_info *info,
 	unsigned level, last_level = info->levels - 1;
 	enum lookup_result r;
 	uint64_t internal_value;
-	block_t leaf, old_leaf = 0;
 
+	struct ro_spine spine;
+
+	init_ro_spine(&spine, info);
 	for (level = 0; level < info->levels; level++) {
-		r = btree_lookup_raw(info, root, keys[level], lower_bound, key,
+		r = btree_lookup_raw(&spine, root, keys[level], lower_bound, key,
 				     level == last_level ? value : &internal_value,
-				     level == last_level ? info->value_size : sizeof(uint64_t),
-				     &leaf);
+				     level == last_level ? info->value_size : sizeof(uint64_t));
 
-		if (level)
-			tm_read_unlock(info->tm, old_leaf);
-
-		if (r != LOOKUP_FOUND)
+		if (r != LOOKUP_FOUND) {
+			exit_ro_spine(&spine);
 			return r;
+		}
 
-		old_leaf = leaf;
 		root = internal_value;
 	}
 
-	tm_read_unlock(info->tm, old_leaf);
+	exit_ro_spine(&spine);
 	return r;
 }
 
@@ -287,154 +259,135 @@ btree_lookup_ge(struct btree_info *info,
 	unsigned level, last_level = info->levels - 1;
 	enum lookup_result r;
 	uint64_t internal_value;
-	block_t leaf, old_leaf = 0;
+	struct ro_spine spine;
 
+	init_ro_spine(&spine, info);
 	for (level = 0; level < info->levels; level++) {
-		r = btree_lookup_raw(info, root, keys[level], upper_bound, key,
+		r = btree_lookup_raw(&spine, root, keys[level], upper_bound, key,
 				     level == last_level ? value : &internal_value,
-				     level == last_level ? info->value_size : sizeof(uint64_t),
-				     &leaf);
-
-		if (level)
-			tm_read_unlock(info->tm, old_leaf);
-
-		if (r != LOOKUP_FOUND)
+				     level == last_level ? info->value_size : sizeof(uint64_t));
+		if (r != LOOKUP_FOUND) {
+			exit_ro_spine(&spine);
 			return r;
+		}
 
-		old_leaf = leaf;
 		root = internal_value;
 	}
 
-	tm_read_unlock(info->tm, old_leaf);
+	exit_ro_spine(&spine);
 	return r;
 }
 
 /*
- * Splits a full node.  Returning the desired side, indicated by |key|, in
- * |node_block| and |node|.
+ * Splits a full node.  Has knowledge of the shadow_spine structure.
  */
-static int btree_split(struct btree_info *info, block_t block, count_adjust_fn fn,
-		       struct node *node,
-		       block_t parent_block, struct node *parent_node, unsigned parent_index,
-		       block_t *result, struct node **result_node)
+static int btree_split(struct shadow_spine *s, block_t root, count_adjust_fn fn,
+		       unsigned parent_index, uint64_t key)
 {
-	int inc;
-	unsigned nr_left, nr_right;
-	block_t left_block, right_block;
-	struct node *left, *right;
-	struct transaction_manager *tm = info->tm;
 	size_t size;
+	unsigned nr_left, nr_right;
+	struct block_node *left, *right, *parent, nnb;
+	struct node *l, *r;
 
-	/* the parent still has a write lock, so it's safe to drop this lock */
-	tm_write_unlock(tm, block);
+	left = shadow_current(s);
+	assert(left);
 
-	if (!tm_shadow_block(tm, block, &left_block, (void **) &left, &inc))
-		abort();
+	if (!new_block(s->info, &nnb))
+		return 0;
 
-	if (inc)
-		inc_children(info, left, fn);
+	right = &nnb;
 
-	if (!tm_new_block(tm, &right_block, (void **) &right))
-		abort();
+	l = left->n;
+	r = right->n;
 
-	nr_left = left->header.nr_entries / 2;
-	nr_right = left->header.nr_entries - nr_left;
+	nr_left = l->header.nr_entries / 2;
+	nr_right = l->header.nr_entries - nr_left;
 
-	left->header.nr_entries = nr_left;
+	l->header.nr_entries = nr_left;
 
-	right->header.flags = left->header.flags;
-	right->header.nr_entries = nr_right;
-	right->header.max_entries = left->header.max_entries;
-	memcpy(right->keys, left->keys + nr_left, nr_right * sizeof(right->keys[0]));
+	r->header.flags = l->header.flags;
+	r->header.nr_entries = nr_right;
+	r->header.max_entries = l->header.max_entries;
+	memcpy(r->keys, l->keys + nr_left, nr_right * sizeof(r->keys[0]));
 
-	size = left->header.flags & INTERNAL_NODE ? sizeof(uint64_t) : info->value_size;
-	memcpy(value_ptr(right, 0, size), value_ptr(left, nr_left, size), size * nr_right);
+	size = l->header.flags & INTERNAL_NODE ? sizeof(uint64_t) : s->info->value_size;
+	memcpy(value_ptr(r, 0, size), value_ptr(l, nr_left, size), size * nr_right);
 
 	/* Patch up the parent */
-	if (parent_node) {
-		memcpy(value_ptr(parent_node, parent_index, sizeof(uint64_t)),
-		       &left_block, sizeof(uint64_t));
+	parent = shadow_parent(s);
+	if (parent) {
+		struct node *p = parent->n;
+		memcpy(value_ptr(p, parent_index, sizeof(uint64_t)),
+		       &left->b, sizeof(uint64_t));
 
-		memmove(parent_node->keys + parent_index + 1,
-			parent_node->keys + parent_index,
-			(parent_node->header.nr_entries - parent_index) * sizeof(parent_node->keys[0]));
-		memmove(value_ptr(parent_node, parent_index + 1, sizeof(uint64_t)),
-			value_ptr(parent_node, parent_index, sizeof(uint64_t)),
-			sizeof(uint64_t) * (parent_node->header.nr_entries - parent_index));
-
-		parent_node->keys[parent_index + 1] = right->keys[0];
-		memcpy(value_ptr(parent_node, parent_index + 1, sizeof(uint64_t)),
-		       &right_block, sizeof(uint64_t));
-		parent_node->header.nr_entries++;
-		check_keys(info, parent_block, parent_node);
-
-		*result = parent_block;
-		*result_node = parent_node;
+		insert_at(sizeof(uint64_t), p, parent_index + 1, r->keys[0], &right->b);
+		check_keys(s->info, parent->b, p);
 
 	} else {
 		/* we need to create a new parent */
-		block_t nb;
+		struct block_node nbn;
 		struct node *nn;
-		if (!tm_new_block(tm, &nb, (void **) &nn))
-			barf("new node");
+
+		if (!new_block(s->info, &nbn))
+			abort();
+
+		nn = nbn.n;
 
 		memset(nn, 0, BLOCK_SIZE);
 		nn->header.flags = INTERNAL_NODE;
-		nn->header.nr_entries = 2;
+		nn->header.nr_entries = 0;
 		nn->header.max_entries = calc_max_entries(sizeof(uint64_t), BLOCK_SIZE);
-		nn->keys[0] = left->keys[0];
-		memcpy(value_ptr(nn, 0, sizeof(uint64_t)),
-		       &left_block, sizeof(uint64_t));
-		nn->keys[1] = right->keys[0];
-		memcpy(value_ptr(nn, 1, sizeof(uint64_t)),
-		       &right_block, sizeof(uint64_t));
-		check_keys(info, nb, nn);
+		insert_at(sizeof(uint64_t), nn, 0, l->keys[0], &left->b);
+		insert_at(sizeof(uint64_t), nn, 1, r->keys[0], &right->b);
+		check_keys(s->info, nbn.b, nn);
 
-		*result = nb;
-		*result_node = nn;
+		/* rejig the spine */
+		memcpy(s->nodes + 1, s->nodes, sizeof(*s->nodes));
+		memcpy(s->nodes, &nbn, sizeof(nbn));
+		s->count++;
+		s->root = nbn.b;
 	}
 
-	tm_write_unlock(tm, left_block);
-	tm_write_unlock(tm, right_block);
+	if (key < r->keys[0]) {
+		unlock(s->info, right);
+	} else {
+		unlock(s->info, shadow_current(s));
+		memcpy(shadow_current(s), right, sizeof(*right));
+	}
 
 	return 1;
 }
 
-static int btree_insert_raw(struct btree_info *info, block_t root, count_adjust_fn fn, uint64_t key,
-			    block_t *new_root, block_t *leaf,
-			    struct node **leaf_node, unsigned *index)
+static int btree_insert_raw(struct shadow_spine *s,
+			    block_t root, count_adjust_fn fn, uint64_t key,
+			    unsigned *index)
 {
-        int i, parent_index = 0, inc;
-        struct node *node, *parent_node = NULL;
-	block_t *block, parent_block = 0, new_root_ = 0, tmp_block, dup_block;
-	struct transaction_manager *tm = info->tm;
-
-	*new_root = root;
-	block = new_root;
+        int i = -1, inc;
+	struct node *node;
 
 	for (;;) {
-		if (!tm_shadow_block(tm, *block, block, (void **) &node, &inc)) {
-			assert(0);
+		if (!shadow_step(s, root, fn, &inc)) {
+			abort();
 			/* FIXME: handle */
 		}
 
-		if (inc)
-			inc_children(info, node, fn);
+		/* We have to patch up the parent node, ugly, but I don't
+		 * see a way to do this automatically as part of the spine
+		 * op. */
+		if (shadow_parent(s) && i >= 0)
+			memcpy(value_ptr(shadow_parent(s)->n, i, sizeof(uint64_t)),
+			       &shadow_current(s)->b,
+			       sizeof(uint64_t));
 
-		if (node->header.nr_entries == node->header.max_entries) {
-			/* FIXME: horrible hack */
-			tmp_block = *block;
-			block = &tmp_block;
-			if (!btree_split(info, *block, fn, node,
-					 parent_block, parent_node, parent_index,
-					 block, &node))
-				/* FIXME: handle this */
-				assert(0);
-		}
+		assert(shadow_current(s));
+		node = shadow_current(s)->n;
 
-		dup_block = *block;
-		if (parent_block && parent_block != *block) /* FIXME: hack */
-			tm_write_unlock(tm, parent_block);
+		if (node->header.nr_entries == node->header.max_entries &&
+		    !btree_split(s, root, fn, i, key))
+			abort();
+
+		assert(shadow_current(s));
+		node = shadow_current(s)->n;
 
 		i = lower_bound(node, key);
 
@@ -447,30 +400,18 @@ static int btree_insert_raw(struct btree_info *info, block_t root, count_adjust_
 			i = 0;
 		}
 
-		if (!new_root_)
-			new_root_ = *block;
-
-		parent_index = i;
-		parent_block = dup_block;
-		parent_node = node;
-		block = value_ptr(node, i, sizeof(uint64_t));
+		root = value64(node, i);
         }
-
-	/*
-	 * We can't refer to *block here, since the parent_block has been
-	 * unlocked (Valgrind spots this).  Hence the |dup_block| hack.
-	 */
-	if (new_root_)
-		*new_root = new_root_;
-	*leaf = dup_block;
-	*leaf_node = node;
 
 	if (i < 0 || node->keys[i] != key)
 		i++;
 
 	/* we're about to overwrite this value, so undo the increment for it */
+	/* FIXME: shame that inc information is leaking outside the spine.
+	 * Plusinc is just plain wrong in the event of a split */
 	if (node->keys[i] == key && inc)
-		fn(tm, value_ptr(node, i, info->value_size), -1);
+		fn(s->info->tm, value_ptr(node, i, s->info->value_size), -1);
+
 
 	*index = i;
 	return 1;
@@ -482,53 +423,60 @@ int btree_insert(struct btree_info *info, block_t root,
 {
 	int need_insert;
 	unsigned level, index, last_level = info->levels - 1;
-	block_t leaf, old_leaf = 0, *block;
-	struct node *leaf_node;
+	block_t *block = &root;
+	struct shadow_spine spine;
+	struct node *n;
 
-	*new_root = root;
-	block = new_root;
+	init_shadow_spine(&spine, info);
 
 	for (level = 0; level < info->levels; level++) {
-		if (!btree_insert_raw(info, *block,
+		if (!btree_insert_raw(&spine, *block,
 				      level == last_level ? info->adjust : value_is_block,
-				      keys[level], block, &leaf, &leaf_node, &index))
+				      keys[level], &index)) {
+			exit_shadow_spine(&spine);
 			abort();
+		}
 
-		if (level)
-			tm_write_unlock(info->tm, old_leaf);
+		assert(shadow_current(&spine));
+		n = shadow_current(&spine)->n;
+		need_insert = ((index >= n->header.nr_entries) ||
+			       (n->keys[index] != keys[level]));
 
-		need_insert = ((index >= leaf_node->header.nr_entries) ||
-			       (leaf_node->keys[index] != keys[level]));
+		*block = shadow_current(&spine)->b;
 
 		if (level == last_level) {
 			if (need_insert)
-				insert_at(info->value_size, leaf_node, index, keys[level], value);
+				insert_at(info->value_size, n, index, keys[level], value);
 			else {
-				if (!info->eq || !info->eq(value_ptr(leaf_node, index, info->value_size),
+				if (!info->eq || !info->eq(value_ptr(n, index, info->value_size),
 							   value))
 					info->adjust(info->tm,
-						     value_ptr(leaf_node, index, info->value_size), -1);
-				memcpy(value_ptr(leaf_node, index, info->value_size),
+						     value_ptr(n, index, info->value_size), -1);
+				memcpy(value_ptr(n, index, info->value_size),
 				       value, info->value_size);
 			}
 		} else {
 			if (need_insert) {
-				block_t new_root;
-				if (!btree_empty(info, &new_root))
+				block_t new_tree;
+				if (!btree_empty(info, &new_tree)) {
+					exit_shadow_spine(&spine);
 					abort();
+				}
 
-				insert_at(sizeof(uint64_t), leaf_node, index, keys[level], &new_root);
+				insert_at(sizeof(uint64_t), n, index, keys[level], &new_tree);
 			}
 		}
 
-		old_leaf = leaf;
 		if (level < last_level)
-			block = value_ptr(leaf_node, index, sizeof(uint64_t));
+			block = value_ptr(n, index, sizeof(uint64_t));
 	}
 
-	tm_write_unlock(info->tm, leaf);
+	*new_root = shadow_root(&spine);
+	exit_shadow_spine(&spine);
 	return 1;
 }
+
+/*----------------------------------------------------------------*/
 
 int btree_clone(struct btree_info *info, block_t root, block_t *clone)
 {
