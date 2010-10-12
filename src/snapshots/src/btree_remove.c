@@ -137,7 +137,7 @@ int btree_merge(struct shadow_spine *s, unsigned parent_index, size_t value_size
 	 * 4) move some of left into current
 	 * 5) move some of right into current
 	 */
-	if (is_just(&left_count) && (left_count.value < merge_threshold(c))) {
+	if (is_just(&left_count) && (left_count.value <= merge_threshold(c))) {
 		/* scenario 1 */
 		struct block_node left;
 		bn_init(&left, value64(p, parent_index - 1));
@@ -153,7 +153,7 @@ int btree_merge(struct shadow_spine *s, unsigned parent_index, size_t value_size
 		tm_dec(s->info->tm, left.b);
 		delete_at(p, parent_index - 1, value_size);
 
-	} else if (is_just(&right_count) && (right_count.value < merge_threshold(c))) {
+	} else if (is_just(&right_count) && (right_count.value <= merge_threshold(c))) {
 		/* scenario 2 */
 		struct block_node right;
 		bn_init(&right, value64(p, parent_index + 1));

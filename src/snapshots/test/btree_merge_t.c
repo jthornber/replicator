@@ -104,7 +104,7 @@ static void test_merge(struct btree_info *info,
 		       unsigned nr_current,
 		       unsigned nr_right)
 {
-	unsigned pindex;
+	unsigned pindex, pentries;
 	struct block_node pbn, lbn, cbn, rbn;
 
 	tm_begin(info->tm);
@@ -133,16 +133,19 @@ static void test_merge(struct btree_info *info,
 		insert_at(sizeof(uint64_t), pbn.n, 1, cbn.n->keys[0], &cbn.b);
 		insert_at(sizeof(uint64_t), pbn.n, 2, rbn.n->keys[0], &rbn.b);
 		pindex = 1;
+		pentries = 3;
 
 	} else if (nr_left) {
 		insert_at(sizeof(uint64_t), pbn.n, 0, lbn.n->keys[0], &lbn.b);
 		insert_at(sizeof(uint64_t), pbn.n, 1, cbn.n->keys[0], &cbn.b);
 		pindex = 1;
+		pentries = 2;
 
 	} else if (nr_right) {
 		insert_at(sizeof(uint64_t), pbn.n, 0, cbn.n->keys[0], &cbn.b);
 		insert_at(sizeof(uint64_t), pbn.n, 1, rbn.n->keys[0], &rbn.b);
 		pindex = 0;
+		pentries = 2;
 
 	} else
 		/* can't happen? */
@@ -202,6 +205,7 @@ static void test_merge(struct btree_info *info,
 		}
 
 		assert(key == nr_left + nr_current + nr_right);
+		assert(pentries > pbn.n->header.nr_entries);
 
 		if (!exit_ro_spine(&spine))
 			abort();
@@ -232,25 +236,56 @@ static int open_file()
 	return fd;
 }
 
+#define THRESHOLD 127
+
+static void test1(struct btree_info *info)
+{
+	test_merge(info, THRESHOLD, THRESHOLD, 0);
+}
+
+static void test2(struct btree_info *info)
+{
+	test_merge(info, 0, THRESHOLD, THRESHOLD);
+}
+
+static void test3(struct btree_info *info)
+{
+	test_merge(info, THRESHOLD, THRESHOLD, THRESHOLD);
+}
+
 int main(int argc, char **argv)
 {
+	static struct {
+		const char *name;
+		void (*fn)(struct btree_info *info);
+
+	} table_[] = {
+		{ "merge empty spine", test_no_current },
+		{ "merge no parent", test_no_parent },
+		{ "merge left (<=t) + current", test1 },
+		{ "merge current + right (<=t)", test2 },
+		{ "merge left (<=t) + current + right (<=t)", test3 }};
+	// FIXME: add tests for > THRESHOLD
+
+	int t;
 	struct btree_info info;
 	struct block_manager *bm;
 	struct transaction_manager *tm;
 
-	bm = block_manager_create(open_file(), BLOCK_SIZE, NR_BLOCKS, 16);
-	tm = tm_create(bm);
-
-	info.tm = tm;
 	info.levels = 1;
 	info.value_size = sizeof(uint64_t);
 	info.adjust = value_is_meaningless;
 	info.eq = NULL;
 
-	test_no_current(&info);
-	test_no_parent(&info);
+	for (t = 0; t < sizeof(table_) / sizeof(*table_); t++) {
+		bm = block_manager_create(open_file(), BLOCK_SIZE, NR_BLOCKS, 16);
+		tm = tm_create(bm);
+		info.tm = tm;
 
-	test_merge(&info, 1, 1, 0);
+		fprintf(stderr, "%s ... ", table_[t].name);
+		table_[t].fn(&info);
+		fprintf(stderr, "done\n");
+	}
 
 	return 0;
 }
